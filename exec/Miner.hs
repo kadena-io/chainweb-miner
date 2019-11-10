@@ -1,17 +1,16 @@
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE CPP #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MagicHash #-}
-{-# LANGUAGE MultiWayIf #-}
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE BangPatterns        #-}
+{-# LANGUAGE CPP                 #-}
+{-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE DeriveGeneric       #-}
+{-# LANGUAGE DerivingStrategies  #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE MultiWayIf          #-}
+{-# LANGUAGE NoImplicitPrelude   #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeOperators       #-}
 
 -- |
 -- Module: Main
@@ -63,48 +62,48 @@
 
 module Main ( main ) where
 
-import Control.Retry
-import Control.Scheduler (Comp(..), replicateWork, terminateWith, withScheduler)
-import Data.Generics.Product.Fields (field)
+import           Control.Retry
+import           Control.Scheduler hiding (traverse_)
+import           Data.Generics.Product.Fields (field)
 import qualified Data.List.NonEmpty as NEL
-import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
-import Data.Tuple.Strict (T2(..), T3(..))
-import Network.Connection (TLSSettings(..))
-import Network.HTTP.Client hiding (Proxy(..), responseBody)
-import Network.HTTP.Client.TLS (mkManagerSettings)
-import Network.HTTP.Types.Status (Status(..))
-import Network.Wai.EventSource (ServerEvent(..))
-import Network.Wai.EventSource.Streaming (withEvents)
-import Options.Applicative
-import RIO
+import           Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
+import           Data.Tuple.Strict (T2(..), T3(..))
+import           Network.Connection (TLSSettings(..))
+import           Network.HTTP.Client hiding (Proxy(..), responseBody)
+import           Network.HTTP.Client.TLS (mkManagerSettings)
+import           Network.HTTP.Types.Status (Status(..))
+import           Network.Wai.EventSource (ServerEvent(..))
+import           Network.Wai.EventSource.Streaming (withEvents)
+import           Options.Applicative
+import           RIO
 import qualified RIO.ByteString as B
 import qualified RIO.ByteString.Lazy as BL
-import RIO.List.Partial (head)
+import           RIO.List.Partial (head)
 import qualified RIO.Text as T
-import Servant.Client
+import           Servant.Client
 import qualified Streaming.Prelude as SP
 import qualified System.Path as Path
 import qualified System.Random.MWC as MWC
-import Text.Printf (printf)
+import           Text.Printf (printf)
 
 #if ! MIN_VERSION_rio(0,1,9)
-import System.Exit (exitFailure)
+import           System.Exit (exitFailure)
 #endif
 
 -- internal modules
 
-import Chainweb.BlockHeader
-import Chainweb.BlockHeader.Validation (prop_block_pow)
-import Chainweb.HostAddress (HostAddress, hostAddressToBaseUrl)
-import Chainweb.Miner.Core
-import Chainweb.Miner.Pact (Miner, pMiner)
-import Chainweb.Miner.RestAPI.Client (solvedClient, workClient)
-import Chainweb.RestAPI.NodeInfo (NodeInfo(..), NodeInfoApi)
-import Chainweb.Utils (runGet, textOption, toText)
-import Chainweb.Version
+import           Chainweb.BlockHeader
+import           Chainweb.BlockHeader.Validation (prop_block_pow)
+import           Chainweb.HostAddress (HostAddress, hostAddressToBaseUrl)
+import           Chainweb.Miner.Core
+import           Chainweb.Miner.Pact (Miner, pMiner)
+import           Chainweb.Miner.RestAPI.Client (solvedClient, workClient)
+import           Chainweb.RestAPI.NodeInfo (NodeInfo(..), NodeInfoApi)
+import           Chainweb.Utils (runGet, textOption, toText)
+import           Chainweb.Version
 
-import Pact.Types.Crypto
-import Pact.Types.Util
+import           Pact.Types.Crypto
+import           Pact.Types.Util
 
 --------------------------------------------------------------------------------
 -- CLI
@@ -112,10 +111,10 @@ import Pact.Types.Util
 -- | Result of parsing commandline flags.
 --
 data ClientArgs = ClientArgs
-    { ll :: !LogLevel
+    { ll           :: !LogLevel
     , coordinators :: ![BaseUrl]
-    , miner :: !Miner
-    , chainid :: !(Maybe ChainId) }
+    , miner        :: !Miner
+    , chainid      :: !(Maybe ChainId) }
     deriving stock (Generic)
 
 -- | The top-level git-style CLI "command" which determines which mining
@@ -131,15 +130,15 @@ data GPUEnv = GPUEnv
     } deriving stock (Generic)
 
 data Env = Env
-    { envGen :: !MWC.GenIO
-    , envMgr :: !Manager
-    , envLog :: !LogFunc
-    , envCmd :: !Command
-    , envArgs :: !ClientArgs
-    , envHashes :: IORef Word64
-    , envSecs :: IORef Word64
+    { envGen         :: !MWC.GenIO
+    , envMgr         :: !Manager
+    , envLog         :: !LogFunc
+    , envCmd         :: !Command
+    , envArgs        :: !ClientArgs
+    , envHashes      :: IORef Word64
+    , envSecs        :: IORef Word64
     , envLastSuccess :: IORef POSIXTime
-    , envUrls :: IORef (NEL.NonEmpty (T2 BaseUrl ChainwebVersion)) }
+    , envUrls        :: IORef (NEL.NonEmpty (T2 BaseUrl ChainwebVersion)) }
     deriving stock (Generic)
 
 instance HasLogFunc Env where
@@ -190,10 +189,10 @@ pLog = option (eitherReader l)
   where
     l :: String -> Either String LogLevel
     l "debug" = Right LevelDebug
-    l "info" = Right LevelInfo
-    l "warn" = Right LevelWarn
+    l "info"  = Right LevelInfo
+    l "warn"  = Right LevelWarn
     l "error" = Right LevelError
-    l _ = Left "Must be one of debug|info|warn|error"
+    l _       = Left "Must be one of debug|info|warn|error"
 
 pUrl :: Parser BaseUrl
 pUrl = hostAddressToBaseUrl Https <$> hadd
@@ -212,11 +211,10 @@ pChainId = optional $ textOption
 -- Work
 
 main :: IO ()
-main = do
-    execParser opts >>= \case
-        Keys -> genKeys
-        cmd@(CPU _ cargs) -> work cmd cargs >> exitFailure
-        cmd@(GPU _ cargs) -> work cmd cargs >> exitFailure
+main = execParser opts >>= \case
+    Keys -> genKeys
+    cmd@(CPU _ cargs) -> work cmd cargs >> exitFailure
+    cmd@(GPU _ cargs) -> work cmd cargs >> exitFailure
   where
     opts :: ParserInfo Command
     opts = info (pCommand <**> helper)
@@ -263,7 +261,7 @@ scheme :: Env -> (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes)
 scheme env = case envCmd env of
     CPU e _ -> cpu e
     GPU e _ -> gpu e
-    Keys -> error "Impossible: You shouldn't reach this case."
+    Keys    -> error "Impossible: You shouldn't reach this case."
 
 genKeys :: IO ()
 genKeys = do
@@ -282,7 +280,7 @@ getWork = do
             logWarn "Failed to fetch work! Switching nodes..."
             urls <- readIORef $ envUrls e
             case NEL.nonEmpty $ NEL.tail urls of
-                Nothing -> logError "No nodes left!" >> pure Nothing
+                Nothing   -> logError "No nodes left!" >> pure Nothing
                 Just rest -> writeIORef (envUrls e) rest >> getWork
         Right bs -> pure $ Just bs
   where
@@ -347,7 +345,7 @@ mining go wb = do
         -- TODO Formalize the signal content a bit more?
         realEvent :: ServerEvent -> Bool
         realEvent ServerEvent{} = True
-        realEvent _ = False
+        realEvent _             = False
 
         -- TODO This is an uncomfortable URL hardcoding.
         req :: T2 BaseUrl ChainwebVersion -> Request
