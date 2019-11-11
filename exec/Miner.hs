@@ -62,20 +62,29 @@
 
 module Main ( main ) where
 
-import           Control.Retry
-import           Control.Scheduler hiding (traverse_)
-import           Data.Generics.Product.Fields (field)
+import Control.Retry
+import Control.Scheduler (Comp(..), replicateWork, terminateWith, withScheduler)
+import Data.Aeson
+import Data.Decimal
+import Data.Default
+import Data.Generics.Product.Fields (field)
+import qualified Data.DList as D
+import Data.List (sort)
 import qualified Data.List.NonEmpty as NEL
-import           Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
-import           Data.Tuple.Strict (T2(..), T3(..))
-import           Network.Connection (TLSSettings(..))
-import           Network.HTTP.Client hiding (Proxy(..), responseBody)
-import           Network.HTTP.Client.TLS (mkManagerSettings)
-import           Network.HTTP.Types.Status (Status(..))
-import           Network.Wai.EventSource (ServerEvent(..))
-import           Network.Wai.EventSource.Streaming (withEvents)
-import           Options.Applicative
-import           RIO
+import Data.Foldable1
+import Data.Monoid
+import qualified Data.Text.IO as T
+import Data.These
+import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
+import Data.Tuple.Strict (T2(..), T3(..))
+import Network.Connection (TLSSettings(..))
+import Network.HTTP.Client hiding (Proxy(..), responseBody)
+import Network.HTTP.Client.TLS (mkManagerSettings)
+import Network.HTTP.Types.Status (Status(..))
+import Network.Wai.EventSource (ServerEvent(..))
+import Network.Wai.EventSource.Streaming (withEvents)
+import Options.Applicative
+import RIO
 import qualified RIO.ByteString as B
 import qualified RIO.ByteString.Lazy as BL
 import           RIO.List.Partial (head)
@@ -92,18 +101,23 @@ import           System.Exit (exitFailure)
 
 -- internal modules
 
-import           Chainweb.BlockHeader
-import           Chainweb.BlockHeader.Validation (prop_block_pow)
-import           Chainweb.HostAddress (HostAddress, hostAddressToBaseUrl)
-import           Chainweb.Miner.Core
-import           Chainweb.Miner.Pact (Miner, pMiner)
-import           Chainweb.Miner.RestAPI.Client (solvedClient, workClient)
-import           Chainweb.RestAPI.NodeInfo (NodeInfo(..), NodeInfoApi)
-import           Chainweb.Utils (runGet, textOption, toText)
-import           Chainweb.Version
+import Chainweb.BlockHeader
+import Chainweb.BlockHeader.Validation (prop_block_pow)
+import Chainweb.HostAddress (HostAddress, hostAddressToBaseUrl)
+import Chainweb.Miner.Core
+import Chainweb.Miner.Pact (Miner(..), pMiner)
+import Chainweb.Miner.RestAPI.Client (solvedClient, workClient)
+import Chainweb.Pact.RestAPI.Client
+import Chainweb.RestAPI.NodeInfo (NodeInfo(..), NodeInfoApi)
+import Chainweb.Utils (runGet, textOption, toText, sshow)
+import Chainweb.Version
 
-import           Pact.Types.Crypto
-import           Pact.Types.Util
+import Pact.ApiReq (mkExec)
+import qualified Pact.Types.Command as P (CommandResult(..), PactResult(..))
+import Pact.Types.Crypto
+import Pact.Types.Exp (Literal(..))
+import Pact.Types.PactValue (PactValue(..))
+import Pact.Types.Util
 
 --------------------------------------------------------------------------------
 -- CLI
@@ -120,7 +134,11 @@ data ClientArgs = ClientArgs
 -- | The top-level git-style CLI "command" which determines which mining
 -- paradigm to follow.
 --
-data Command = CPU CPUEnv ClientArgs | GPU GPUEnv ClientArgs | Keys
+data Command =
+    CPU CPUEnv ClientArgs
+    | GPU GPUEnv ClientArgs
+    | Keys
+    | Balance BaseUrl Text
 
 newtype CPUEnv = CPUEnv { cores :: Word16 }
 
@@ -152,6 +170,7 @@ pCommand = hsubparser
     (  command "cpu" (info cpuOpts (progDesc "Perform multicore CPU mining"))
     <> command "gpu" (info gpuOpts (progDesc "Perform GPU mining"))
     <> command "keys" (info keysOpts (progDesc "Generate public/private key pair"))
+    <> command "balance" (info balancesOpts (progDesc "Get balances on all chains"))
     )
 
 pMinerPath :: Parser Text
@@ -169,13 +188,19 @@ pGpuEnv :: Parser GPUEnv
 pGpuEnv = GPUEnv <$> pMinerPath <*> pMinerArgs
 
 gpuOpts :: Parser Command
-gpuOpts = liftA2 GPU pGpuEnv pClientArgs
+gpuOpts = GPU <$> pGpuEnv <*> pClientArgs
 
 cpuOpts :: Parser Command
-cpuOpts = liftA2 (CPU . CPUEnv) pCores pClientArgs
+cpuOpts = (CPU . CPUEnv) <$> pCores <*> pClientArgs
 
 keysOpts :: Parser Command
 keysOpts = pure Keys
+
+balancesOpts :: Parser Command
+balancesOpts = Balance <$> pUrl <*> pMinerName
+  where
+    pMinerName =
+      textOption (long "miner-account" <> help "Coin Contract account name of Miner")
 
 pCores :: Parser Word16
 pCores = option auto
@@ -211,10 +236,12 @@ pChainId = optional $ textOption
 -- Work
 
 main :: IO ()
-main = execParser opts >>= \case
-    Keys -> genKeys
-    cmd@(CPU _ cargs) -> work cmd cargs >> exitFailure
-    cmd@(GPU _ cargs) -> work cmd cargs >> exitFailure
+main = do
+    execParser opts >>= \case
+        Keys -> genKeys
+        Balance url minerAccountName -> getBalances url minerAccountName
+        cmd@(CPU _ cargs) -> work cmd cargs >> exitFailure
+        cmd@(GPU _ cargs) -> work cmd cargs >> exitFailure
   where
     opts :: ParserInfo Command
     opts = info (pCommand <**> helper)
@@ -239,11 +266,7 @@ work cmd cargs = do
     nodeVer :: Manager -> BaseUrl -> IO (Either ClientError (T2 BaseUrl ChainwebVersion))
     nodeVer m baseurl = (T2 baseurl <$>) <$> getInfo m baseurl
 
-    -- | This allows this code to accept the self-signed certificates from
-    -- `chainweb-node`.
-    --
-    ss :: TLSSettings
-    ss = TLSSettingsSimple True True True
+
 
 getInfo :: Manager -> BaseUrl -> IO (Either ClientError ChainwebVersion)
 getInfo m url = fmap nodeVersion <$> runClientM (client (Proxy @NodeInfoApi)) cenv
@@ -261,7 +284,85 @@ scheme :: Env -> (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes)
 scheme env = case envCmd env of
     CPU e _ -> cpu e
     GPU e _ -> gpu e
-    Keys    -> error "Impossible: You shouldn't reach this case."
+    _ -> error "Impossible: You shouldn't reach this case."
+
+getBalances :: BaseUrl -> Text -> IO ()
+getBalances url mi = do
+    balanceStmts <- newManager (mkManagerSettings ss Nothing) >>= go . cenv
+    case balanceStmts of
+      These errors balances -> do
+        printf "-- Retrieved Balances -- \n"
+        forM_ balances printer
+        printf "-- Errors --\n"
+        forM_ errors errPrinter
+      This errors -> do
+        printf "-- Errors --\n"
+        forM_ errors errPrinter
+      That balances -> do
+        printf "-- Retrieved Balances -- \n"
+        total <- foldM printBalance 0 balances
+        printf $ "Your total is ₭" <> sshow (roundTo 12 total) <> ".\n"
+  where
+    printer (a, b) = T.putStrLn $ toBalanceMsg a mi b
+    errPrinter (a,b) = T.putStrLn $ toErrMsg a b
+    printBalance tot (c, bal) = tot + bal <$ T.putStrLn (toBalanceMsg c mi bal)
+    cenv m = ClientEnv m url Nothing
+    mConc as f = runConcurrently $ foldMap1 (Concurrently . f) as
+
+    go env = do
+      NodeInfo v _ cs _ <-
+         runClientM (client (Proxy @NodeInfoApi)) env >>= either (throwString . show) return
+      mConc (NEL.fromList $ sort cs) $ \cidtext -> do
+          c <- chainIdFromText cidtext
+          cmd <-
+            mkExec (printf "(coin.get-balance \"%s\")" mi) Null def mempty Nothing Nothing
+          toLocalResult cidtext <$> runClientM (pactLocalApiClient v c cmd) env
+
+    toLocalResult c r =
+      case r of
+        Right res -> convertResult c $ P._crResult res
+        Left l -> This $ D.singleton (c, Client l)
+
+    convertResult c (P.PactResult result) =
+       case result of
+        Right (PLiteral (LDecimal bal)) -> That $ D.singleton (c, bal)
+        Left perr -> This $ D.singleton (c, LookupError (sshow perr))
+        Right a -> This $ D.singleton (c, PactResponseError (sshow a))
+
+data LocalCmdError
+  = Client ClientError
+  | LookupError Text
+  | PactResponseError Text
+
+toErrMsg :: Text -> LocalCmdError -> Text
+toErrMsg c (Client err) =
+    "Client error on chain "
+    <> c
+    <> ": "
+    <> sshow err
+toErrMsg c (LookupError err)
+    = "Balance lookup error on chain: "
+    <> c
+    <> ": "
+    <> err
+
+toErrMsg c (PactResponseError err) = mconcat
+    [ "Pact result error on chain: "
+    , sshow c
+    , ": "
+    , sshow err
+    , ". This should never happen. Please raise an issue at "
+    , "https://github.com/kadena-io/chainweb-node/issues."
+    ]
+
+toBalanceMsg :: Text -> Text -> Decimal -> Text
+toBalanceMsg cidtext account bal =
+    "Balance on chain "
+    <> cidtext
+    <> " for "
+    <> account
+    <> " is ₭"
+    <> sshow (roundTo 12 bal)
 
 genKeys :: IO ()
 genKeys = do
@@ -428,3 +529,9 @@ gpu ge@(GPUEnv mpath margs) t@(TargetBytes target) h@(HeaderBytes blockbytes) = 
                  modifyIORef' (envHashes e) (+ numNonces)
                  modifyIORef' (envSecs e) (+ secs)
                  pure $! HeaderBytes newBytes
+
+-- | This allows this code to accept the self-signed certificates from
+-- `chainweb-node`.
+--
+ss :: TLSSettings
+ss = TLSSettingsSimple True True True
