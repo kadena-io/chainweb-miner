@@ -1,5 +1,4 @@
 {-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE CPP                 #-}
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE DerivingStrategies  #-}
@@ -85,10 +84,6 @@ import qualified Streaming.Prelude as SP
 import qualified System.Path as Path
 import qualified System.Random.MWC as MWC
 import           Text.Printf (printf)
-
-#if ! MIN_VERSION_rio(0,1,9)
-import           System.Exit (exitFailure)
-#endif
 
 -- internal modules
 
@@ -255,7 +250,6 @@ run = do
     env <- ask
     logInfo "Starting Miner."
     getWork >>= traverse_ (mining (scheme env))
-    liftIO exitFailure
 
 scheme :: Env -> (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes)
 scheme env = case envCmd env of
