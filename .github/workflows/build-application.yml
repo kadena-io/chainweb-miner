@@ -4,7 +4,7 @@ on:
   push:
     branches:
     - master
-    - github-ci
+    - github-ci-1
 
 jobs:
   build:
