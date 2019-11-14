@@ -4,7 +4,7 @@ on:
   push:
     branches:
     - master
-    - github-ci
+    - github-ci-1
 
 jobs:
   build:
@@ -143,18 +143,20 @@ jobs:
         mkdir -p dist-newstyle/artifacts/applications
         mkdir -p dist-newstyle/artifacts/docs
         cp $(find dist-newstyle/ -name 'chainweb-miner' -type f) dist-newstyle/artifacts/applications
+    - name: Strip Binary
+      run: strip dist-newstyle/artifacts/applications/chainweb-miner
     - name: Publish applications
       uses: actions/upload-artifact@v1
       with:
         name: chainweb-applications.${{ matrix.ghc }}.${{ matrix.os }}
         path: dist-newstyle/artifacts/applications
 
-#    - name: Publish applications to S3
-#      run: |
-#        export BINFILE="chainweb.${{ matrix.ghc }}.${{ matrix.os }}.$(git rev-parse --short HEAD).tar.gz"
-#        export LATEST_BINFILE="chainweb.${{ matrix.ghc }}.${{ matrix.os }}.tar.gz"
-#        tar -C ./dist-newstyle/artifacts/applications/ -czf $BINFILE chainweb-miner
-#        aws s3 cp $BINFILE s3://$ARTIFACT_BUCKET/
-#        aws s3 cp s3://$ARTIFACT_BUCKET/$BINFILE s3://$ARTIFACT_BUCKET/$LATEST_BINFILE
-#        aws s3api put-object-acl --bucket $ARTIFACT_BUCKET --key=$BINFILE --acl public-read
-#        aws s3api put-object-acl --bucket $ARTIFACT_BUCKET --key=$LATEST_BINFILE --acl public-read
+    - name: Publish applications to S3
+      run: |
+        export BINFILE="chainweb-miner.${{ matrix.ghc }}.${{ matrix.os }}.$(git rev-parse --short HEAD).tar.gz"
+        export LATEST_BINFILE="chainweb-miner.${{ matrix.ghc }}.${{ matrix.os }}.tar.gz"
+        tar -C ./dist-newstyle/artifacts/applications/ -czf $BINFILE chainweb-miner
+        aws s3 cp $BINFILE s3://$ARTIFACT_BUCKET/
+        aws s3 cp s3://$ARTIFACT_BUCKET/$BINFILE s3://$ARTIFACT_BUCKET/$LATEST_BINFILE
+        aws s3api put-object-acl --bucket $ARTIFACT_BUCKET --key=$BINFILE --acl public-read
+        aws s3api put-object-acl --bucket $ARTIFACT_BUCKET --key=$LATEST_BINFILE --acl public-read
