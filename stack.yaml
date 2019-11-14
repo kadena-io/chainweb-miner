@@ -32,4 +32,4 @@ extra-deps:
   - github: kadena-io/chainweb-storage
     commit: 17a5fb130926582eff081eeb1b94cb6c7097c67a
   - github: kadena-io/pact
-    commit: 34783f9639a87b391382fe063e87737766fcdbb1
+    commit: 0bab430ade7898a6ff2607eee71e2f14b294d3e3
