@@ -63,8 +63,8 @@ module Main ( main ) where
 
 import           Control.Retry
 import           Control.Scheduler hiding (traverse_)
+import           Data.Default (def)
 import           Data.Generics.Product.Fields (field)
-import qualified Data.List.NonEmpty as NEL
 import           Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
 import           Data.Tuple.Strict (T2(..), T3(..))
 import           Network.Connection (TLSSettings(..))
@@ -77,7 +77,11 @@ import           Options.Applicative
 import           RIO
 import qualified RIO.ByteString as B
 import qualified RIO.ByteString.Lazy as BL
+import           RIO.Char (isHexDigit)
 import           RIO.List.Partial (head)
+import qualified RIO.NonEmpty as NEL
+import qualified RIO.NonEmpty.Partial as NEL
+import qualified RIO.Set as S
 import qualified RIO.Text as T
 import           Servant.Client
 import qualified Streaming.Prelude as SP
@@ -91,14 +95,15 @@ import           Chainweb.BlockHeader
 import           Chainweb.BlockHeader.Validation (prop_block_pow)
 import           Chainweb.HostAddress (HostAddress, hostAddressToBaseUrl)
 import           Chainweb.Miner.Core
-import           Chainweb.Miner.Pact (Miner, pMiner)
+import           Chainweb.Miner.Pact (Miner(..), MinerKeys(..))
 import           Chainweb.Miner.RestAPI.Client (solvedClient, workClient)
 import           Chainweb.RestAPI.NodeInfo (NodeInfo(..), NodeInfoApi)
 import           Chainweb.Utils (runGet, textOption, toText)
 import           Chainweb.Version
 
-import           Pact.Types.Crypto
-import           Pact.Types.Util
+import qualified Pact.Types.Crypto as P hiding (PublicKey)
+import qualified Pact.Types.Term as P
+import qualified Pact.Types.Util as P
 
 --------------------------------------------------------------------------------
 -- CLI
@@ -133,7 +138,7 @@ data Env = Env
     , envHashes      :: IORef Word64
     , envSecs        :: IORef Word64
     , envLastSuccess :: IORef POSIXTime
-    , envUrls        :: IORef (NEL.NonEmpty (T2 BaseUrl ChainwebVersion)) }
+    , envUrls        :: IORef (NonEmpty (T2 BaseUrl ChainwebVersion)) }
     deriving stock (Generic)
 
 instance HasLogFunc Env where
@@ -202,6 +207,28 @@ pChainId = optional $ textOption
     (long "chain" <> metavar "CHAIN-ID"
      <> help "Prioritize work requests for a specific chain")
 
+pMiner :: Parser Miner
+pMiner = Miner
+    <$> strOption (long "miner-account" <> help "Coin Contract account name of Miner")
+    <*> (MinerKeys <$> pks)
+  where
+    pks :: Parser P.KeySet
+    pks = P.KeySet <$> (fmap S.fromList $ many pKey) <*> pPred
+
+pKey :: Parser P.PublicKey
+pKey = option k (long "miner-key"
+    <> help "Public key of the account to send rewards (can pass multiple times)")
+  where
+    k :: ReadM P.PublicKey
+    k = eitherReader $ \s -> do
+        unless (length s == 64 && all isHexDigit s)
+            . Left $ "Public Key " <> s <> " is not valid."
+        Right $ fromString s
+
+pPred :: Parser P.Name
+pPred = (\s -> P.Name $ P.BareName s def) <$>
+    strOption (long "miner-pred" <> value "keys-all" <> help "Keyset predicate")
+
 --------------------------------------------------------------------------------
 -- Work
 
@@ -259,9 +286,9 @@ scheme env = case envCmd env of
 
 genKeys :: IO ()
 genKeys = do
-    kp <- genKeyPair defaultScheme
-    printf "public:  %s\n" (T.unpack . toB16Text $ getPublic kp)
-    printf "private: %s\n" (T.unpack . toB16Text $ getPrivate kp)
+    kp <- P.genKeyPair P.defaultScheme
+    printf "public:  %s\n" (T.unpack . P.toB16Text $ P.getPublic kp)
+    printf "private: %s\n" (T.unpack . P.toB16Text $ P.getPrivate kp)
 
 -- | Attempt to get new work while obeying a sane retry policy.
 --

@@ -37,6 +37,7 @@ executable chainweb-miner
       bytestring >= 0.10
     , chainweb >= 1.0
     , connection >= 0.3
+    , data-default >= 0.7
     , generic-lens >= 1.2
     , http-client >= 0.6
     , http-client-tls >= 0.3
