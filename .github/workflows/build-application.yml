@@ -148,7 +148,7 @@ jobs:
     - name: Publish applications
       uses: actions/upload-artifact@v1
       with:
-        name: chainweb-applications.${{ matrix.ghc }}.${{ matrix.os }}
+        name: chainweb-miner.${{ matrix.ghc }}.${{ matrix.os }}
         path: dist-newstyle/artifacts/applications
 
     - name: Publish applications to S3
