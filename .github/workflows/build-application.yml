@@ -16,7 +16,7 @@ jobs:
         ghc: ['8.6.5', '8.8.1']
         cabal: ['3.0']
         os: ['ubuntu-16.04', 'ubuntu-18.04', 'macOS-10.14']
-        cabalcache: ['true']
+        cabalcache: ['false']
         distcache: ['false']
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.kadena_cabal_cache_aws_access_key_id }}
@@ -149,12 +149,12 @@ jobs:
         name: chainweb-applications.${{ matrix.ghc }}.${{ matrix.os }}
         path: dist-newstyle/artifacts/applications
 
-    - name: Publish applications to S3
-      run: |
-        export BINFILE="chainweb.${{ matrix.ghc }}.${{ matrix.os }}.$(git rev-parse --short HEAD).tar.gz"
-        export LATEST_BINFILE="chainweb.${{ matrix.ghc }}.${{ matrix.os }}.tar.gz"
-        tar -C ./dist-newstyle/artifacts/applications/ -czf $BINFILE chainweb-miner
-        aws s3 cp $BINFILE s3://$ARTIFACT_BUCKET/
-        aws s3 cp s3://$ARTIFACT_BUCKET/$BINFILE s3://$ARTIFACT_BUCKET/$LATEST_BINFILE
-        aws s3api put-object-acl --bucket $ARTIFACT_BUCKET --key=$BINFILE --acl public-read
-        aws s3api put-object-acl --bucket $ARTIFACT_BUCKET --key=$LATEST_BINFILE --acl public-read
+#    - name: Publish applications to S3
+#      run: |
+#        export BINFILE="chainweb.${{ matrix.ghc }}.${{ matrix.os }}.$(git rev-parse --short HEAD).tar.gz"
+#        export LATEST_BINFILE="chainweb.${{ matrix.ghc }}.${{ matrix.os }}.tar.gz"
+#        tar -C ./dist-newstyle/artifacts/applications/ -czf $BINFILE chainweb-miner
+#        aws s3 cp $BINFILE s3://$ARTIFACT_BUCKET/
+#        aws s3 cp s3://$ARTIFACT_BUCKET/$BINFILE s3://$ARTIFACT_BUCKET/$LATEST_BINFILE
+#        aws s3api put-object-acl --bucket $ARTIFACT_BUCKET --key=$BINFILE --acl public-read
+#        aws s3api put-object-acl --bucket $ARTIFACT_BUCKET --key=$LATEST_BINFILE --acl public-read
