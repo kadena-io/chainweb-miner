@@ -4,7 +4,6 @@
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE MultiWayIf          #-}
-{-# LANGUAGE NoImplicitPrelude   #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -61,12 +60,20 @@
 
 module Main ( main ) where
 
+import           Control.Concurrent (threadDelay)
+import           Control.Concurrent.Async (race)
+import           Control.Exception (throwIO)
+import           Control.Exception.Safe (catchAny)
+import           Control.Monad (unless, when)
 import           Control.Retry
 import           Control.Scheduler hiding (traverse_)
 import           Data.Default (def)
-import           Data.Generics.Product.Fields (field)
+import           Data.Foldable (traverse_)
+import           Data.Functor (($>), void)
+import           Data.String (fromString)
 import           Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
 import           Data.Tuple.Strict (T2(..), T3(..))
+import           Data.Word
 import           Network.Connection (TLSSettings(..))
 import           Network.HTTP.Client hiding (Proxy(..), responseBody)
 import           Network.HTTP.Client.TLS (mkManagerSettings)
@@ -74,17 +81,25 @@ import           Network.HTTP.Types.Status (Status(..))
 import           Network.Wai.EventSource (ServerEvent(..))
 import           Network.Wai.EventSource.Streaming (withEvents)
 import           Options.Applicative
-import           RIO
-import qualified RIO.ByteString as B
-import qualified RIO.ByteString.Lazy as BL
-import           RIO.Char (isHexDigit)
-import           RIO.List.Partial (head)
-import qualified RIO.NonEmpty as NEL
-import qualified RIO.NonEmpty.Partial as NEL
-import qualified RIO.Set as S
-import qualified RIO.Text as T
+import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy as BL
+import           Data.Char (isHexDigit)
+import           Data.Either (isLeft)
+import           Data.IORef
+import           Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NEL
+import           Data.Proxy (Proxy(..))
+import qualified Data.Set as S
+import           Data.Text (Text)
+import qualified Data.Text as T
+import qualified Data.Text.IO as T
+import           Data.Text.Encoding (decodeUtf8, encodeUtf8)
+import           GHC.Generics(Generic)
 import           Servant.Client
 import qualified Streaming.Prelude as SP
+import           System.Exit (exitFailure)
+import           System.IO (stderr)
+import           System.LogLevel
 import qualified System.Path as Path
 import qualified System.Random.MWC as MWC
 import           Text.Printf (printf)
@@ -94,6 +109,7 @@ import           Text.Printf (printf)
 import           Chainweb.BlockHeader
 import           Chainweb.BlockHeader.Validation (prop_block_pow)
 import           Chainweb.HostAddress (HostAddress, hostAddressToBaseUrl)
+import           Chainweb.Logger
 import           Chainweb.Miner.Core
 import           Chainweb.Miner.Pact (Miner(..), MinerKeys(..))
 import           Chainweb.Miner.RestAPI.Client (solvedClient, workClient)
@@ -125,24 +141,24 @@ data Command = CPU CPUEnv ClientArgs | GPU GPUEnv ClientArgs | Keys
 newtype CPUEnv = CPUEnv { cores :: Word16 }
 
 data GPUEnv = GPUEnv
-    { envMinerPath :: Text
-    , envMinerArgs :: [Text]
+    { envMinerPath :: !Text
+    , envMinerArgs :: ![Text]
     } deriving stock (Generic)
 
 data Env = Env
     { envGen         :: !MWC.GenIO
     , envMgr         :: !Manager
-    , envLog         :: !LogFunc
+    , envLog         :: !GenericLogger
     , envCmd         :: !Command
     , envArgs        :: !ClientArgs
-    , envHashes      :: IORef Word64
-    , envSecs        :: IORef Word64
-    , envLastSuccess :: IORef POSIXTime
-    , envUrls        :: IORef (NonEmpty (T2 BaseUrl ChainwebVersion)) }
+    , envHashes      :: !(IORef Word64)
+    , envSecs        :: !(IORef Word64)
+    , envLastSuccess :: !(IORef POSIXTime)
+    , envUrls        :: !(IORef (NonEmpty (T2 BaseUrl ChainwebVersion))) }
     deriving stock (Generic)
 
-instance HasLogFunc Env where
-    logFuncL = field @"envLog"
+logg :: Env -> LogLevel -> Text -> IO ()
+logg e = logFunctionText (envLog e)
 
 pClientArgs :: Parser ClientArgs
 pClientArgs = ClientArgs <$> pLog <*> some pUrl <*> pMiner <*> pChainId
@@ -184,14 +200,14 @@ pCores = option auto
 
 pLog :: Parser LogLevel
 pLog = option (eitherReader l)
-    (long "log-level" <> metavar "debug|info|warn|error" <> value LevelInfo
+    (long "log-level" <> metavar "debug|info|warn|error" <> value Info
     <> help "The minimum level of log messages to display (default: info)")
   where
     l :: String -> Either String LogLevel
-    l "debug" = Right LevelDebug
-    l "info"  = Right LevelInfo
-    l "warn"  = Right LevelWarn
-    l "error" = Right LevelError
+    l "debug" = Right Debug
+    l "info"  = Right Info
+    l "warn"  = Right Warn
+    l "error" = Right Error
     l _       = Left "Must be one of debug|info|warn|error"
 
 pUrl :: Parser BaseUrl
@@ -244,19 +260,18 @@ main = execParser opts >>= \case
 
 work :: Command -> ClientArgs -> IO ()
 work cmd cargs = do
-    lopts <- setLogMinLevel (ll cargs) . setLogUseLoc False <$> logOptionsHandle stderr True
-    withLogFunc lopts $ \logFunc -> do
-        g <- MWC.createSystemRandom
-        m <- newManager (mkManagerSettings ss Nothing)
-        euvs <- sequence <$> traverse (nodeVer m) (coordinators cargs)
-        case euvs of
-            Left e -> throwString $ show e
-            Right results -> do
-                mUrls <- newIORef $ NEL.fromList results
-                stats <- newIORef 0
-                start <- newIORef 0
-                successStart <- getPOSIXTime >>= newIORef
-                runRIO (Env g m logFunc cmd cargs stats start successStart mUrls) run
+    g <- MWC.createSystemRandom
+    m <- newManager (mkManagerSettings ss Nothing)
+    euvs <- sequence <$> traverse (nodeVer m) (coordinators cargs)
+    case euvs of
+        Left e -> throwIO $ userError $ show e
+        Right results -> do
+            mUrls <- newIORef $ NEL.fromList results
+            stats <- newIORef 0
+            start <- newIORef 0
+            successStart <- getPOSIXTime >>= newIORef
+            let logger = genericLogger (ll cargs) (T.hPutStrLn stderr)
+            run $ Env g m logger cmd cargs stats start successStart mUrls
   where
     nodeVer :: Manager -> BaseUrl -> IO (Either ClientError (T2 BaseUrl ChainwebVersion))
     nodeVer m baseurl = (T2 baseurl <$>) <$> getInfo m baseurl
@@ -272,16 +287,15 @@ getInfo m url = fmap nodeVersion <$> runClientM (client (Proxy @NodeInfoApi)) ce
   where
     cenv = ClientEnv m url Nothing
 
-run :: RIO Env ()
-run = do
-    env <- ask
-    logInfo "Starting Miner."
-    getWork >>= traverse_ (mining (scheme env))
+run :: Env -> IO ()
+run env = do
+    logg env Info "Starting Miner."
+    getWork env >>= traverse_ (mining env (scheme env))
 
-scheme :: Env -> (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes)
+scheme :: Env -> TargetBytes -> HeaderBytes -> IO HeaderBytes
 scheme env = case envCmd env of
-    CPU e _ -> cpu e
-    GPU e _ -> gpu e
+    CPU e _ -> cpu env e
+    GPU e _ -> gpu env e
     Keys    -> error "Impossible: You shouldn't reach this case."
 
 genKeys :: IO ()
@@ -292,17 +306,16 @@ genKeys = do
 
 -- | Attempt to get new work while obeying a sane retry policy.
 --
-getWork :: RIO Env (Maybe WorkBytes)
-getWork = do
-    logDebug "Attempting to fetch new work from the remote Node"
-    e <- ask
-    retrying policy (const warn) (const . liftIO $ f e) >>= \case
+getWork :: Env -> IO (Maybe WorkBytes)
+getWork env = do
+    logg env Debug "Attempting to fetch new work from the remote Node"
+    retrying policy (const warn) (const f) >>= \case
         Left _ -> do
-            logWarn "Failed to fetch work! Switching nodes..."
-            urls <- readIORef $ envUrls e
+            logg env Warn "Failed to fetch work! Switching nodes..."
+            urls <- readIORef $ envUrls env
             case NEL.nonEmpty $ NEL.tail urls of
-                Nothing   -> logError "No nodes left!" >> pure Nothing
-                Just rest -> writeIORef (envUrls e) rest >> getWork
+                Nothing   -> logg env Error "No nodes left!" $> Nothing
+                Just rest -> writeIORef (envUrls env) rest >> getWork env
         Right bs -> pure $ Just bs
   where
     -- | If we wait longer than the average block time and still can't get
@@ -311,32 +324,32 @@ getWork = do
     policy :: RetryPolicy
     policy = exponentialBackoff 500000 <> limitRetries 7
 
-    warn :: Either ClientError WorkBytes -> RIO Env Bool
+    warn :: Either ClientError WorkBytes -> IO Bool
     warn (Right _) = pure False
     warn (Left se) = bad se $> True
 
-    bad :: ClientError -> RIO Env ()
-    bad (ConnectionError _) = logWarn "Could not connect to the Node."
-    bad (FailureResponse _ r) = logWarn $ c <> " from Node: " <> m
+    bad :: ClientError -> IO ()
+    bad (ConnectionError _) = logg env Warn "Could not connect to the Node."
+    bad (FailureResponse _ r) = logg env Warn $ c <> " from Node: " <> m
       where
-        c = display . statusCode $ responseStatusCode r
-        m = displayBytesUtf8 . BL.toStrict $ responseBody r
-    bad _ = logError "Something truly bad has happened."
+        c = T.pack $ show $ statusCode (responseStatusCode r)
+        m = decodeUtf8 . BL.toStrict $ responseBody r
+    bad _ = logg env Error "Something truly bad has happened."
 
-    f :: Env -> IO (Either ClientError WorkBytes)
-    f e = do
-        T2 u v <- NEL.head <$> readIORef (envUrls e)
+    f :: IO (Either ClientError WorkBytes)
+    f = do
+        T2 u v <- NEL.head <$> readIORef (envUrls env)
         runClientM (workClient v (chainid a) $ miner a) (ClientEnv m u Nothing)
       where
-        a = envArgs e
-        m = envMgr e
+        a = envArgs env
+        m = envMgr env
 
 -- | A supervisor thread that listens for new work and manages mining threads.
 --
-mining :: (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes) -> WorkBytes -> RIO Env ()
-mining go wb = do
+mining :: Env -> (TargetBytes -> HeaderBytes -> IO HeaderBytes) -> WorkBytes -> IO ()
+mining env go wb = do
     race updateSignal (go tbytes hbytes) >>= traverse_ miningSuccess
-    getWork >>= traverse_ (mining go)
+    getWork env >>= traverse_ (mining env go)
   where
     T3 (ChainBytes cbs) tbytes hbytes@(HeaderBytes hbs) = unWorkBytes wb
 
@@ -348,20 +361,19 @@ mining go wb = do
 
     -- TODO Rework to use Servant's streaming? Otherwise I can't use the
     -- convenient client function here.
-    updateSignal :: RIO Env ()
+    updateSignal :: IO ()
     updateSignal = catchAny f $ \se -> do
-        logWarn "Couldn't connect to update stream. Trying again..."
-        logDebug $ display se
+        logg env Warn "Couldn't connect to update stream. Trying again..."
+        logg env Debug $ T.pack (show se)
         threadDelay 1000000  -- One second
         updateSignal
       where
-        f :: RIO Env ()
+        f :: IO ()
         f = do
-            e <- ask
-            u <- NEL.head <$> readIORef (envUrls e)
-            liftIO $ withEvents (req u) (envMgr e) (void . SP.head_ . SP.filter realEvent)
-            cid <- liftIO chain
-            logDebug . display . T.pack $ printf "Chain %d: Current work was preempted." cid
+            u <- NEL.head <$> readIORef (envUrls env)
+            withEvents (req u) (envMgr env) (void . SP.head_ . SP.filter realEvent)
+            cid <- chain
+            logg env Debug . T.pack $ printf "Chain %d: Current work was preempted." cid
 
         -- TODO Formalize the signal content a bit more?
         realEvent :: ServerEvent -> Bool
@@ -383,41 +395,39 @@ mining go wb = do
     -- to some "mining coordinator" (likely a chainweb-node). If `updateSignal`
     -- won the race instead, then the `go` call is automatically cancelled.
     --
-    miningSuccess :: HeaderBytes -> RIO Env ()
+    miningSuccess :: HeaderBytes -> IO ()
     miningSuccess h = do
-      e <- ask
-      secs <- readIORef (envSecs e)
-      hashes <- readIORef (envHashes e)
-      before <- readIORef (envLastSuccess e)
-      now <- liftIO getPOSIXTime
-      writeIORef (envLastSuccess e) now
-      let !m = envMgr e
+      secs <- readIORef (envSecs env)
+      hashes <- readIORef (envHashes env)
+      before <- readIORef (envLastSuccess env)
+      now <- getPOSIXTime
+      writeIORef (envLastSuccess env) now
+      let !m = envMgr env
           !r = (fromIntegral hashes :: Double) / max 1 (fromIntegral secs) / 1000000
           !d = ceiling (now - before) :: Int
-      cid <- liftIO chain
-      hgh <- liftIO height
-      logInfo . display . T.pack $
+      cid <- chain
+      hgh <- height
+      logg env Info . T.pack $
           printf "Chain %d: Mined block at Height %d. (%.2f MH/s - %ds since last)" cid hgh r d
-      T2 url v <- NEL.head <$> readIORef (envUrls e)
-      res <- liftIO . runClientM (solvedClient v h) $ ClientEnv m url Nothing
-      when (isLeft res) $ logWarn "Failed to submit new BlockHeader!"
+      T2 url v <- NEL.head <$> readIORef (envUrls env)
+      res <- runClientM (solvedClient v h) $ ClientEnv m url Nothing
+      when (isLeft res) $ logg env Warn "Failed to submit new BlockHeader!"
 
-cpu :: CPUEnv -> TargetBytes -> HeaderBytes -> RIO Env HeaderBytes
-cpu cpue tbytes hbytes = do
-    logDebug "Mining a new Block"
-    !start <- liftIO getPOSIXTime
-    e <- ask
-    T2 _ v <- NEL.head <$> readIORef (envUrls e)
-    T2 new ns <- liftIO . fmap head . withScheduler comp $ \sch ->
+cpu :: Env -> CPUEnv -> TargetBytes -> HeaderBytes -> IO HeaderBytes
+cpu env cpue tbytes hbytes = do
+    logg env Debug "Mining a new Block"
+    !start <- getPOSIXTime
+    T2 _ v <- NEL.head <$> readIORef (envUrls env)
+    T2 new ns <- fmap head . withScheduler comp $ \sch ->
         replicateWork (fromIntegral $ cores cpue) sch $ do
             -- TODO Be more clever about the Nonce that's picked to ensure that
             -- there won't be any overlap?
-            n <- Nonce <$> MWC.uniform (envGen e)
+            n <- Nonce <$> MWC.uniform (envGen env)
             new <- usePowHash v (\p -> mine p n tbytes) hbytes
             terminateWith sch new
-    !end <- liftIO getPOSIXTime
-    modifyIORef' (envHashes e) $ \hashes -> ns * fromIntegral (cores cpue) + hashes
-    modifyIORef' (envSecs e) (\secs -> secs + ceiling (end - start))
+    !end <- getPOSIXTime
+    modifyIORef' (envHashes env) $ \hashes -> ns * fromIntegral (cores cpue) + hashes
+    modifyIORef' (envSecs env) (\secs -> secs + ceiling (end - start))
     pure new
   where
     comp :: Comp
@@ -425,27 +435,28 @@ cpu cpue tbytes hbytes = do
              1 -> Seq
              n -> ParN n
 
-gpu :: GPUEnv -> TargetBytes -> HeaderBytes -> RIO Env HeaderBytes
-gpu ge@(GPUEnv mpath margs) t@(TargetBytes target) h@(HeaderBytes blockbytes) = do
-    minerPath <- liftIO . Path.makeAbsolute . Path.fromFilePath $ T.unpack mpath
-    e <- ask
-    res <- liftIO $ callExternalMiner minerPath (map T.unpack margs) False target blockbytes
-    case res of
-      Left err -> do
-          logError . display . T.pack $ "Error running GPU miner: " <> err
-          throwString err
-      Right (MiningResult nonceBytes numNonces hps _) -> do
-          let newBytes = nonceBytes <> B.drop 8 blockbytes
-              secs = numNonces `div` max 1 hps
+gpu :: Env -> GPUEnv -> TargetBytes -> HeaderBytes -> IO HeaderBytes
+gpu env (GPUEnv mpath margs) (TargetBytes target) (HeaderBytes blockbytes) = go
+    where
+    go = do
+        minerPath <- Path.makeAbsolute . Path.fromFilePath $ T.unpack mpath
+        res <- callExternalMiner minerPath (map T.unpack margs) False target blockbytes
+        case res of
+            Left err -> do
+                logg env Error $ "Error running GPU miner: " <> T.pack err
+                throwIO $ userError err
+            Right (MiningResult nonceBytes numNonces hps _) -> do
+                let newBytes = nonceBytes <> B.drop 8 blockbytes
+                    secs = numNonces `div` max 1 hps
 
-          -- FIXME Consider removing this check if during later benchmarking it
-          -- proves to be an issue.
-          bh <- runGet decodeBlockHeaderWithoutHash newBytes
+                -- FIXME Consider removing this check if during later benchmarking it
+                -- proves to be an issue.
+                bh <- runGet decodeBlockHeaderWithoutHash newBytes
 
-          if | not (prop_block_pow bh) -> do
-                 logError "Bad nonce returned from GPU!"
-                 gpu ge t h
-             | otherwise -> do
-                 modifyIORef' (envHashes e) (+ numNonces)
-                 modifyIORef' (envSecs e) (+ secs)
-                 pure $! HeaderBytes newBytes
+                if | not (prop_block_pow bh) -> do
+                        logg env Error "Bad nonce returned from GPU!"
+                        go
+                    | otherwise -> do
+                        modifyIORef' (envHashes env) (+ numNonces)
+                        modifyIORef' (envSecs env) (+ secs)
+                        pure $! HeaderBytes newBytes
