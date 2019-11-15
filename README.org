@@ -5,12 +5,9 @@
 - [[#what-is-mining][What is Mining?]]
 - [[#mining-via-official-kadena-software][Mining via Official Kadena Software]]
   - [[#obtaining-a-key-pair][Obtaining a Key Pair]]
-  - [[#mining-with-chainweb-node][Mining with chainweb-node]]
-    - [[#basics][Basics]]
-    - [[#disabling-the-in-process-miner][Disabling the In-Process Miner]]
-    - [[#accepting-external-work-requests][Accepting External Work Requests]]
   - [[#mining-with-chainweb-miner][Mining with chainweb-miner]]
-    - [[#basics-1][Basics]]
+    - [[#cpu-mining][CPU Mining]]
+    - [[#gpu-mining][GPU Mining]]
     - [[#chain-focusing][Chain Focusing]]
     - [[#log-suppression][Log Suppression]]
   - [[#troubleshooting][Troubleshooting]]
@@ -43,114 +40,41 @@ effort.
 
 * Mining via Official Kadena Software
 
-There are two official ways to mine for the Kadena network. The first is to use
-~chainweb-node~ (a "full" Node) and perform in-process CPU mining alongside
-other Node components. *This has the advantage of low-latency for getting new
-work* since all databases are available on the same machine.
+We recommend ~chainweb-miner~, our dedicated Mining Client. Work requests are
+sent to known Nodes, which construct blocks for the client. Once solved, the
+client returns the block to the Node for submission to the wider network.
 
-The second way is to use ~chainweb-miner~, our dedicated Mining Client. Work
-requests are sent to known Nodes, which construct blocks for the client. Once
-solved, the client returns the block to the Node for submission to the wider
-network. This client boasts *much higher mining performance* and a *much simpler
-setup*, since a ~chainweb-miner~ has no database connections and thus no storage
-footprint.
-
-For beginners, we recommend ~chainweb-miner~. Either way, you will need a Key
-Pair before beginning.
+You will need a Key Pair before beginning.
 
 ** Obtaining a Key Pair
-The easiest way to obtain a Key Pair is by typing './chainweb-miner keys' in your terminal window.
-Once generated, please be very careful to note down the public and secret (private) key as you don't want to lose them.
 
-** Mining with chainweb-node
-
-This assumes you have obtained a ~chainweb-node~ binary, the full setup
-instructions for which can be found [[https://github.com/kadena-io/chainweb-node/blob/master/README.md][here]].
-
-*** Basics
-
-~chainweb-node~ has many configuration options. The following displays them all:
-
-#+begin_src bash
-  ./chainweb-node --print-config
-#+end_src
-
-In fact, a common pattern is to pipe this output to a file, and then immediately
-reuse it:
-
-#+begin_src bash
-  ./chainweb-node --print-config > config.yaml
-#+end_src
-
-Doing so, we'll see the following configuration of your "mining identity":
-
-#+begin_src yaml
-  minerInfo:
-    account: <your-account-name-here>  # This must be unowned, or already claimed by you!
-    predicate: keys-all
-    public-keys: [<your-public-key-here>]
-#+end_src
-
-In order to be certain that the account does not already exist, it is recommended that you use your public key for the account name.
-
-With values specific to you replaced above (and the rest of your ~chainweb-node~
-configured correctly!) we're ready to mine:
-
-#+begin_src bash
-./chainweb-node --config-file=config.yaml
-#+end_src
-
-By default, in-process mining is turned on. This means that while your Node is
-participating in the overall network, it will also be mining in the background.
-
-*Note:* If your designated account did not previously exist, it will be created
-the first time you successfully mine on the same chain as the mined block. If
-you specify an account name that you do not own, *your rewards will likely be
-lost!*
-
-*** Disabling the In-Process Miner
-
-If you want to run a Node without in-process mining:
-
-#+begin_src bash
-  ./chainweb-node --disable-mining ...  # other flags
-#+end_src
-
-*** Accepting External Work Requests
-
-By default, a Node does *not* accept external requests for new mining work, say
-from a ~chainweb-miner~ or other third-party client. To turn this on:
-
-#+begin_src bash
-  ./chainweb-node --mining-coordination ... # other flags
-#+end_src
-
-This will open several endpoints that clients can call, which are described in
-detail below. *Note:* Keep this option off if you aren't willing to have
-anonymous clients connect to you for work generation calls. You won't be
-rewarded for assembling blocks for them!
+The easiest way to obtain a Key Pair is via the ~chainweb-miner keys~ command.
+Once generated, please be very careful to save the public and secret (private)
+keys because you don't want to lose them.
 
 ** Mining with chainweb-miner
 
-Mining via ~chainweb-miner~ is much simpler and generally promises better
-results.
-
-*** Basics
+*** CPU Mining
 
 #+begin_src bash
-  ./chainweb-miner cpu --cores=4 --node=<trusted-node>:443 --miner-account=<you> --miner-key=<your-public-key>
+  chainweb-miner cpu --cores=4 --node=<trusted-node>:443 --miner-account=<you> --miner-key=<your-public-key>
 #+end_src
 
-The list of trusted nodes can be found [[https://github.com/kadena-io/chainweb-node/wiki][here]]
+The list of trusted nodes can be found [[https://github.com/kadena-io/chainweb-node/wiki][here]].
 
 Things to note:
 
 - You can dedicate as many cores to parallel mining as you want with ~--cores~.
 - If specifying the number of cores, the ~--cores~ flag must follow directly after the ~cpu~ flag.
-- When ~--cores~ is omitted during CPU mining, then the number of cores used will default to 1. 
+- When ~--cores~ is omitted during CPU mining, then the number of cores used will default to 1.
 - You can only communicate with one Node at a time.
 - As stated above, your declared account must be owned by you, or your rewards
   will likely be lost.
+
+*** GPU Mining
+
+We also provide a GPU Miner which integrates with ~chainweb-miner~. Installation
+and usage instructions [[https://github.com/kadena-io/chainweb-cuda-miner][can found here]].
 
 *** Chain Focusing
 
@@ -167,7 +91,7 @@ You may only be interested in warning or error messages. If so, use the
 ~--log-level~ flag:
 
 #+begin_src bash
-  ./chainweb-miner cpu --log-level=warn ... # other flags
+  chainweb-miner cpu --log-level=warn ... # other flags
 #+end_src
 
 #+begin_example
