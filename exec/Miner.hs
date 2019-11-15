@@ -213,7 +213,7 @@ pMiner = Miner
     <*> (MinerKeys <$> pks)
   where
     pks :: Parser P.KeySet
-    pks = P.KeySet <$> (fmap S.fromList $ many pKey) <*> pPred
+    pks = P.KeySet <$> (fmap S.fromList $ some pKey) <*> pPred
 
 pKey :: Parser P.PublicKey
 pKey = option k (long "miner-key"
