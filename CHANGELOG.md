@@ -1,3 +1,5 @@
-# Changelog for chainweb-miner
+# `chainweb-miner` Changelog
 
-## Unreleased changes
+## 1.0.1 (2019-11-14)
+
+- It is now impossible to pass illegal Public Keys to `--miner-key`.
