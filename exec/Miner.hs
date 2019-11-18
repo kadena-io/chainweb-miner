@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns        #-}
 {-# LANGUAGE CPP                 #-}
 {-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE DeriveAnyClass      #-}
 {-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE LambdaCase          #-}
@@ -11,6 +12,10 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeOperators       #-}
+
+#ifndef MIN_VERSION_rio
+#define MIN_VERSION_rio(a,b,c) 1
+#endif
 
 -- |
 -- Module: Main
@@ -65,6 +70,7 @@ module Main ( main ) where
 import           Control.Retry
 import           Control.Scheduler hiding (traverse_)
 import           Data.Generics.Product.Fields (field)
+import qualified Data.HashMap.Strict as HM
 import qualified Data.List.NonEmpty as NEL
 import           Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
 import           Data.Tuple.Strict (T2(..), T3(..))
@@ -99,7 +105,7 @@ import           Chainweb.Miner.Core
 import           Chainweb.Miner.Pact (Miner, pMiner)
 import           Chainweb.Miner.RestAPI.Client (solvedClient, workClient)
 import           Chainweb.RestAPI.NodeInfo (NodeInfo(..), NodeInfoApi)
-import           Chainweb.Utils (runGet, textOption, toText)
+import           Chainweb.Utils (runGet, runPut, textOption, toText)
 import           Chainweb.Version
 
 import           Pact.Types.Crypto
@@ -254,7 +260,7 @@ run :: RIO Env ()
 run = do
     env <- ask
     logInfo "Starting Miner."
-    getWork >>= traverse_ (mining (scheme env))
+    mining (scheme env)
     liftIO exitFailure
 
 scheme :: Env -> (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes)
@@ -310,76 +316,92 @@ getWork = do
         a = envArgs e
         m = envMgr e
 
+-- -------------------------------------------------------------------------- --
+-- Mining
+
+workKey :: WorkBytes -> RIO Env UpdateKey
+workKey wb = do
+    e <- ask
+    T2 url _ <- NEL.head <$> readIORef (envUrls e)
+    cid <- liftIO $ chain cbytes
+    return $! UpdateKey
+        { _updateKeyChainId = cid
+        , _updateKeyHost = baseUrlHost url
+        , _updateKeyPort = baseUrlPort url
+        }
+  where
+    T3 cbytes _ _ = unWorkBytes wb
+
 -- | A supervisor thread that listens for new work and manages mining threads.
 --
-mining :: (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes) -> WorkBytes -> RIO Env ()
-mining go wb = do
-    race updateSignal (go tbytes hbytes) >>= traverse_ miningSuccess
-    getWork >>= traverse_ (mining go)
+-- TODO: use exponential backoff instead of fixed delay when retrying.
+-- (restart retry sequence when the maximum retry count it reached)
+--
+mining :: (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes) -> RIO Env ()
+mining go = do
+    updateMap <- newUpdateMap -- TODO use a bracket
+    miningLoop updateMap go
+
+-- | The inner mining loop.
+--
+-- It uses 'getWork' to obtain new work and starts mining. If a block is solved it
+-- calls 'miningSuccess' and loops around.
+--
+-- It also starts over with new work when an update is triggered.
+--
+-- NOTE: if this fails continuously, e.g. because of a miss-configured or buggy
+-- miner, this function will spin forever!
+--
+-- TODO: add rate limiting for failures and raise an error if the function fails
+-- at an higher rate.
+--
+miningLoop :: UpdateMap -> (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes) -> RIO Env ()
+miningLoop updateMap inner = mask $ \umask -> do
+    logInfo $ "Start mining loop"
+    let go = do
+            forever (umask loopBody) `catchAny` \e -> do
+                logWarn $ "Mining loop failed. Trying again ..."
+                logDebug . display . T.pack $ show e
+            go
+    void go `finally` logInfo "Mining loop stopped"
   where
-    T3 (ChainBytes cbs) tbytes hbytes@(HeaderBytes hbs) = unWorkBytes wb
-
-    chain :: IO Int
-    chain = chainIdInt <$> runGet decodeChainId cbs
-
-    height :: IO Word64
-    height = _height <$> runGet decodeBlockHeight (B.take 8 $ B.drop 258 hbs)
-
-    -- TODO Rework to use Servant's streaming? Otherwise I can't use the
-    -- convenient client function here.
-    updateSignal :: RIO Env ()
-    updateSignal = catchAny f $ \se -> do
-        logWarn "Couldn't connect to update stream. Trying again..."
-        logDebug $ display se
-        threadDelay 1000000  -- One second
-        updateSignal
+    loopBody = do
+        w <- getWork >>= \case
+            Nothing -> exitFailure
+            Just x -> return x
+        let T3 cbytes tbytes hbytes = unWorkBytes w
+        cid <- liftIO $ chainInt cbytes
+        updateKey <- workKey w
+        logDebug . display . T.pack $ printf "Chain %d: Start mining on new work item." cid
+        withPreemption updateMap updateKey (inner tbytes hbytes) >>= \case
+            Right a -> miningSuccess w a
+            Left () ->
+                logDebug $ "Mining loop was preempted. Getting updated work ..."
       where
-        f :: RIO Env ()
-        f = do
+
+        -- | If the `go` call won the `race`, this function yields the result back
+        -- to some "mining coordinator" (likely a chainweb-node).
+        --
+        miningSuccess :: WorkBytes -> HeaderBytes -> RIO Env ()
+        miningSuccess w h = do
             e <- ask
-            u <- NEL.head <$> readIORef (envUrls e)
-            liftIO $ withEvents (req u) (envMgr e) (void . SP.head_ . SP.filter realEvent)
-            cid <- liftIO chain
-            logDebug . display . T.pack $ printf "Chain %d: Current work was preempted." cid
-
-        -- TODO Formalize the signal content a bit more?
-        realEvent :: ServerEvent -> Bool
-        realEvent ServerEvent{} = True
-        realEvent _             = False
-
-        -- TODO This is an uncomfortable URL hardcoding.
-        req :: T2 BaseUrl ChainwebVersion -> Request
-        req (T2 u v) = defaultRequest
-            { host = encodeUtf8 . T.pack . baseUrlHost $ u
-            , path = "chainweb/0.0/" <> encodeUtf8 (toText v) <> "/mining/updates"
-            , port = baseUrlPort u
-            , secure = True
-            , method = "GET"
-            , requestBody = RequestBodyBS cbs
-            , responseTimeout = responseTimeoutNone }
-
-    -- | If the `go` call won the `race`, this function yields the result back
-    -- to some "mining coordinator" (likely a chainweb-node). If `updateSignal`
-    -- won the race instead, then the `go` call is automatically cancelled.
-    --
-    miningSuccess :: HeaderBytes -> RIO Env ()
-    miningSuccess h = do
-      e <- ask
-      secs <- readIORef (envSecs e)
-      hashes <- readIORef (envHashes e)
-      before <- readIORef (envLastSuccess e)
-      now <- liftIO getPOSIXTime
-      writeIORef (envLastSuccess e) now
-      let !m = envMgr e
-          !r = (fromIntegral hashes :: Double) / max 1 (fromIntegral secs) / 1000000
-          !d = ceiling (now - before) :: Int
-      cid <- liftIO chain
-      hgh <- liftIO height
-      logInfo . display . T.pack $
-          printf "Chain %d: Mined block at Height %d. (%.2f MH/s - %ds since last)" cid hgh r d
-      T2 url v <- NEL.head <$> readIORef (envUrls e)
-      res <- liftIO . runClientM (solvedClient v h) $ ClientEnv m url Nothing
-      when (isLeft res) $ logWarn "Failed to submit new BlockHeader!"
+            secs <- readIORef (envSecs e)
+            hashes <- readIORef (envHashes e)
+            before <- readIORef (envLastSuccess e)
+            now <- liftIO getPOSIXTime
+            writeIORef (envLastSuccess e) now
+            let !m = envMgr e
+                !r = (fromIntegral hashes :: Double) / max 1 (fromIntegral secs) / 1000000
+                !d = ceiling (now - before) :: Int
+            cid <- liftIO $ chainInt cbytes
+            hgh <- liftIO $ height hbytes
+            logInfo . display . T.pack $
+                printf "Chain %d: Mined block at Height %d. (%.2f MH/s - %ds since last)" cid hgh r d
+            T2 url v <- NEL.head <$> readIORef (envUrls e)
+            res <- liftIO . runClientM (solvedClient v h) $ ClientEnv m url Nothing
+            when (isLeft res) $ logWarn "Failed to submit new BlockHeader!"
+          where
+            T3 cbytes _ hbytes = unWorkBytes w
 
 cpu :: CPUEnv -> TargetBytes -> HeaderBytes -> RIO Env HeaderBytes
 cpu cpue tbytes hbytes = do
@@ -428,3 +450,110 @@ gpu ge@(GPUEnv mpath margs) t@(TargetBytes target) h@(HeaderBytes blockbytes) = 
                  modifyIORef' (envHashes e) (+ numNonces)
                  modifyIORef' (envSecs e) (+ secs)
                  pure $! HeaderBytes newBytes
+
+-- -------------------------------------------------------------------------- --
+-- Update Stream Pool
+--
+
+-- Maintains one upstream for each url and chain
+--
+-- TODO;
+--
+-- * implement reaper thread
+-- * implement shutdown that closes all connections
+--
+
+data UpdateKey = UpdateKey
+    { _updateKeyHost :: !String
+    , _updateKeyPort :: !Int
+    , _updateKeyChainId :: !ChainId
+    }
+    deriving (Show, Eq, Ord, Generic, Hashable)
+
+newtype UpdateMap = UpdateMap
+    { _updateMap :: MVar (HM.HashMap UpdateKey (T2 (TVar Int) (Async ())))
+    }
+
+newUpdateMap :: MonadIO m => m UpdateMap
+newUpdateMap = UpdateMap <$> newMVar mempty
+
+getUpdateVar :: UpdateMap -> UpdateKey -> RIO Env (TVar Int)
+getUpdateVar (UpdateMap v) k = modifyMVar v $ \m -> case HM.lookup k m of
+    Just x -> do
+        !n@(T2 var _) <- checkStream x
+        return (HM.insert k n m, var)
+    Nothing -> do
+        !n@(T2 var _) <- newTVarIO 0 >>= newUpdateStream
+        return (HM.insert k n m, var)
+  where
+    checkStream :: T2 (TVar Int) (Async ()) -> RIO Env (T2 (TVar Int) (Async ()))
+    checkStream (T2 var a) = poll a >>= \case
+        Nothing -> return (T2 var a)
+        Just (Left _) -> newUpdateStream var -- TODO logging, throttling
+        Just (Right _) -> newUpdateStream var
+
+    newUpdateStream :: TVar Int -> RIO Env (T2 (TVar Int) (Async ()))
+    newUpdateStream var = T2 var
+        <$!> async (updateStream (_updateKeyChainId k) var)
+
+    -- TODO:
+    --
+    -- We don't reap old entries from the map. That's fine since the maximum
+    -- number of entries is bounded by the number of base urls times the number
+    -- of chains.
+    --
+    -- We could add a counter that would reap the map from stall streams every
+    -- nth time getUpdateVar.
+
+    -- We don't restart streams automatically, in order to save connections.
+    -- Thus there is a risk that a stream dies while a mining loop is subscribed
+    -- to it. We solve this by preempting the loop if we haven't seen an update
+    -- after 2 times the block time.
+
+withPreemption :: UpdateMap -> UpdateKey -> RIO Env a -> RIO Env (Either () a)
+withPreemption m k inner = do
+    var <- getUpdateVar m k
+    race (awaitChange var) inner
+  where
+    awaitChange var = do
+        cur <- readTVarIO var
+        timeoutVar <- registerDelay 60000000 -- 1 minute -- FIXME this should be 2*block time
+        atomically $ do
+            isTimeout <- readTVar timeoutVar
+            isUpdate <- (/= cur) <$> readTVar var
+            unless (isTimeout || isUpdate) $ retrySTM
+
+updateStream :: ChainId -> TVar Int -> RIO Env ()
+updateStream cid var = do
+    e <- ask
+    u <- NEL.head <$> readIORef (envUrls e) -- Do we ever use something else than the head?
+    liftIO $ withEvents (req u) (envMgr e) $ \updates -> updates
+        & SP.filter realEvent
+        & SP.mapM_ (\_ -> atomically $ modifyTVar' var (+ 1))
+  where
+    realEvent :: ServerEvent -> Bool
+    realEvent ServerEvent{} = True
+    realEvent _ = False
+
+    req :: T2 BaseUrl ChainwebVersion -> Request
+    req (T2 u v) = defaultRequest
+        { host = encodeUtf8 . T.pack . baseUrlHost $ u
+        , path = "chainweb/0.0/" <> encodeUtf8 (toText v) <> "/mining/updates"
+        , port = baseUrlPort u
+        , secure = True
+        , method = "GET"
+        , requestBody = RequestBodyBS $ runPut (encodeChainId cid)
+        , responseTimeout = responseTimeoutNone
+        }
+
+-- -------------------------------------------------------------------------- --
+-- Utils
+
+chain :: MonadThrow m => MonadIO m => ChainBytes -> m ChainId
+chain (ChainBytes cbs) = runGet decodeChainId cbs
+
+chainInt :: MonadThrow m => MonadIO m => ChainBytes -> m Int
+chainInt c = chainIdInt <$> chain c
+
+height :: MonadThrow m => MonadIO m => HeaderBytes -> m Word64
+height (HeaderBytes hbs) = _height <$> runGet decodeBlockHeight (B.take 8 $ B.drop 258 hbs)
