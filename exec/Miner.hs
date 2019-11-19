@@ -66,7 +66,6 @@ import           Control.Retry
 import           Control.Scheduler hiding (traverse_)
 import           Data.Default (def)
 import           Data.Generics.Product.Fields (field)
-import qualified Data.HashMap.Strict as HM
 import           Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
 import           Data.Tuple.Strict (T2(..), T3(..))
 import           Network.Connection (TLSSettings(..))
@@ -80,6 +79,7 @@ import           RIO
 import qualified RIO.ByteString as B
 import qualified RIO.ByteString.Lazy as BL
 import           RIO.Char (isHexDigit)
+import qualified RIO.HashMap as HM
 import           RIO.List.Partial (head)
 import qualified RIO.NonEmpty as NEL
 import qualified RIO.NonEmpty.Partial as NEL
@@ -215,7 +215,7 @@ pMiner = Miner
     <*> (MinerKeys <$> pks)
   where
     pks :: Parser P.KeySet
-    pks = P.KeySet <$> (fmap S.fromList $ some pKey) <*> pPred
+    pks = P.KeySet <$> fmap S.fromList (some pKey) <*> pPred
 
 pKey :: Parser P.PublicKey
 pKey = option k (long "miner-key"
@@ -374,10 +374,10 @@ mining go = do
 --
 miningLoop :: UpdateMap -> (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes) -> RIO Env ()
 miningLoop updateMap inner = mask $ \umask -> do
-    logInfo $ "Start mining loop"
+    logInfo "Start mining loop"
     let go = do
             forever (umask loopBody) `catchAny` \e -> do
-                logWarn $ "Mining loop failed. Trying again ..."
+                logWarn "Mining loop failed. Trying again ..."
                 logDebug . display . T.pack $ show e
             go
     void go `finally` logInfo "Mining loop stopped"
@@ -393,7 +393,7 @@ miningLoop updateMap inner = mask $ \umask -> do
         withPreemption updateMap updateKey (inner tbytes hbytes) >>= \case
             Right a -> miningSuccess w a
             Left () ->
-                logDebug $ "Mining loop was preempted. Getting updated work ..."
+                logDebug "Mining loop was preempted. Getting updated work ..."
       where
 
         -- | If the `go` call won the `race`, this function yields the result back
@@ -481,8 +481,8 @@ gpu ge@(GPUEnv mpath margs) t@(TargetBytes target) h@(HeaderBytes blockbytes) = 
 --
 
 data UpdateKey = UpdateKey
-    { _updateKeyHost :: !String
-    , _updateKeyPort :: !Int
+    { _updateKeyHost    :: !String
+    , _updateKeyPort    :: !Int
     , _updateKeyChainId :: !ChainId
     }
     deriving (Show, Eq, Ord, Generic, Hashable)
@@ -497,10 +497,10 @@ newUpdateMap = UpdateMap <$> newMVar mempty
 getUpdateVar :: UpdateMap -> UpdateKey -> RIO Env (TVar Int)
 getUpdateVar (UpdateMap v) k = modifyMVar v $ \m -> case HM.lookup k m of
     Just x -> do
-        !n@(T2 var _) <- checkStream x
+        n@(T2 var _) <- checkStream x
         return (HM.insert k n m, var)
     Nothing -> do
-        !n@(T2 var _) <- newTVarIO 0 >>= newUpdateStream
+        n@(T2 var _) <- newTVarIO 0 >>= newUpdateStream
         return (HM.insert k n m, var)
   where
     checkStream :: T2 (TVar Int) (Async ()) -> RIO Env (T2 (TVar Int) (Async ()))
@@ -538,7 +538,7 @@ withPreemption m k inner = do
         atomically $ do
             isTimeout <- readTVar timeoutVar
             isUpdate <- (/= cur) <$> readTVar var
-            unless (isTimeout || isUpdate) $ retrySTM
+            unless (isTimeout || isUpdate) retrySTM
 
 updateStream :: ChainId -> TVar Int -> RIO Env ()
 updateStream cid var = do
@@ -550,7 +550,7 @@ updateStream cid var = do
   where
     realEvent :: ServerEvent -> Bool
     realEvent ServerEvent{} = True
-    realEvent _ = False
+    realEvent _             = False
 
     req :: T2 BaseUrl ChainwebVersion -> Request
     req (T2 u v) = defaultRequest
