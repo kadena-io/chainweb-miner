@@ -32,10 +32,11 @@ executable chainweb-miner
   import: commons
   hs-source-dirs: exec
   main-is: Miner.hs
-  ghc-options: -threaded -rtsopts -with-rtsopts=-N
   other-modules:
-    BalanceChecker
-    Utils
+      Miner.BalanceChecker
+      Miner.Types
+      Miner.Updates
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       bytestring >= 0.10
     , Decimal >= 0.4.2
