@@ -6,17 +6,16 @@ module BalanceChecker where
 import Data.Aeson
 import Data.Decimal
 import Data.Default
-import Data.Foldable1
+import Data.Semigroup.Foldable
 import Data.List (sort)
-import Data.Text (Text)
 import Data.These
 import qualified Data.DList as D
 import qualified Data.List.NonEmpty as NEL
-import qualified Data.Text.IO as T
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS
 
 import RIO
+import qualified RIO.Text as T
 import Servant.Client
 
 import Text.Printf
@@ -54,9 +53,10 @@ getBalances url mi = do
         total <- foldM printBalance 0 balances
         printf $ "Your total is ₭" <> sshow (roundTo 12 total) <> ".\n"
   where
-    printer (a, b) = T.putStrLn $ toBalanceMsg a mi b
-    errPrinter (a,b) = T.putStrLn $ toErrMsg a b
-    printBalance tot (c, bal) = tot + bal <$ T.putStrLn (toBalanceMsg c mi bal)
+    printer (a, b) = printf $ T.unpack $ toBalanceMsg a mi b
+    errPrinter (a,b) = printf $ T.unpack $ toErrMsg a b
+    printBalance :: Decimal -> (Text, Decimal) -> IO Decimal
+    printBalance tot (c, bal) = tot + bal <$ printf (T.unpack $ toBalanceMsg c mi bal)
     cenv m = ClientEnv m url Nothing
     mConc as f = runConcurrently $ foldMap1 (Concurrently . f) as
 

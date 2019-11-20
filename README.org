@@ -99,7 +99,7 @@ You may only be interested in warning or error messages. If so, use the
   2019-09-16 16:58:23.646547: [error] Failed to fetch work! Is the Node down?
 #+end_example
 
-*** Specifying Mulitple Nodes
+*** Specifying Multiple Nodes
 
 You can specify multiple nodes to mine from the command line.
 *However*, what this actually means needs to be clarified. Consider
@@ -123,8 +123,8 @@ establish a connection with the specified next node. This process will
 continue until there are no more nodes left to consider. Upon this
 event, the chainweb-miner process will halt and exit. For example,
 given the above example, if the chainweb-miner cannot communicate with
-either us-e3.chainweb and us-e2.chainweb.com, its process will
-terminate.
+either us-e3.chainweb or us-e2.chainweb.com, then the process
+terminates.
 
 Also, the first node specified from the left is the first node that
 chainweb-miner attempts to form a communication channel to get blocks
@@ -157,6 +157,7 @@ The balance on chain 8 is 64.526644.
 The balance on chain 9 is 48.394983.
 Your total is 580.739796000000
 #+END_EXAMPLE
+
 
 We recommend querying your balance from the node you have been mining
 to as well as a couple other nodes (i.e. the bootstrap nodes).

@@ -90,20 +90,6 @@ import           Text.Printf (printf)
 
 -- internal modules
 
--- <<<<<<< HEAD
--- import Chainweb.BlockHeader
--- import Chainweb.BlockHeader.Validation (prop_block_pow)
--- import Chainweb.Miner.Core
--- import Chainweb.Miner.Pact (Miner(..), pMiner)
--- import Chainweb.Miner.RestAPI.Client (solvedClient, workClient)
--- import Chainweb.RestAPI.NodeInfo (NodeInfo(..), NodeInfoApi)
--- import Chainweb.Utils (runGet, textOption, toText)
--- import Chainweb.Version
-
--- import Pact.Types.Crypto
--- import Pact.Types.Util
-
--- =======
 import           Chainweb.BlockHeader
 import           Chainweb.BlockHeader.Validation (prop_block_pow)
 import           Chainweb.Miner.Core

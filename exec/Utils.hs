@@ -1,10 +1,10 @@
 module Utils where
 
-import Data.Text (Text)
-
 import Options.Applicative
 
 import Network.Connection
+
+import RIO
 
 import Servant.Client
 
