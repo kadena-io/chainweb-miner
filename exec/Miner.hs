@@ -4,6 +4,7 @@
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE MultiWayIf          #-}
 {-# LANGUAGE NoImplicitPrelude   #-}
+{-# LANGUAGE NumericUnderscores  #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -244,7 +245,7 @@ miningLoop updateMap inner = mask go
     go :: (RIO Env () -> RIO Env a) -> RIO Env ()
     go umask = (forever (umask loopBody) `catches` handlers) >>= \case
         Irrecoverable -> pure ()
-        Recoverable   -> go umask
+        Recoverable   -> threadDelay 1_000_000 >> go umask
       where
         handlers =
             [ Handler $ \(e :: IOException) -> logError (display e) >> pure Irrecoverable
