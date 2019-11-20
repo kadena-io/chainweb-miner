@@ -237,15 +237,17 @@ mining go = do
 -- at an higher rate.
 --
 miningLoop :: UpdateMap -> (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes) -> RIO Env ()
-miningLoop updateMap inner = mask $ \umask -> do
-    logInfo "Start mining loop"
-    let go = do
-            forever (umask loopBody) `catchAny` \e -> do
-                logWarn "Mining loop failed. Trying again ..."
-                logDebug . display . T.pack $ show e
-            go
-    void go `finally` logInfo "Mining loop stopped"
+miningLoop updateMap inner = mask $ \umask ->
+    void (go umask) `finally` logInfo "Mining halted."
   where
+    go :: (RIO Env () -> RIO Env a) -> RIO Env b
+    go umask = do
+        forever (umask loopBody) `catchAny` \e -> do
+            logWarn "Error in mining loop. Trying again ..."
+            logDebug $ display e
+        go umask
+
+    loopBody :: RIO Env ()
     loopBody = do
         w <- getWork >>= \case
             Nothing -> exitFailure
@@ -256,8 +258,7 @@ miningLoop updateMap inner = mask $ \umask -> do
         logDebug . display . T.pack $ printf "Chain %d: Start mining on new work item." cid
         withPreemption updateMap updateKey (inner tbytes hbytes) >>= \case
             Right a -> miningSuccess w a
-            Left () ->
-                logDebug "Mining loop was preempted. Getting updated work ..."
+            Left () -> logDebug "Mining loop was preempted. Getting updated work ..."
       where
         -- | If the `go` call won the `race`, this function yields the result back
         -- to some "mining coordinator" (likely a chainweb-node).
@@ -285,7 +286,6 @@ miningLoop updateMap inner = mask $ \umask -> do
 
 cpu :: CPUEnv -> TargetBytes -> HeaderBytes -> RIO Env HeaderBytes
 cpu cpue tbytes hbytes = do
-    logDebug "Mining a new Block"
     !start <- liftIO getPOSIXTime
     e <- ask
     T2 _ v <- NEL.head <$> readIORef (envUrls e)
