@@ -1,7 +1,7 @@
 cabal-version: 2.2
 
 name:          chainweb-miner
-version:       1.0.0
+version:       1.0.1
 description:   Official mining software for the Kadena Public Blockchain.
 homepage:      https://github.com/kadena-io/chainweb-miner
 author:        Kadena Developers
@@ -46,16 +46,16 @@ executable chainweb-miner
     , dlist >= 0.8
     , foldable1
     , generic-lens >= 1.2
-    , http-client >= 0.5
+    , http-client >= 0.6
     , http-client-tls >= 0.3
     , http-types >= 0.12
-    , mwc-random >= 0.13
+    , mwc-random >= 0.14
     , optparse-applicative >= 0.14
-    , pact >= 2.6
+    , pact >= 3.3
     , paths >= 0.2
-    , retry >= 0.7
-    , rio >= 0.1.5
-    , scheduler >= 1.4.1
+    , retry >= 0.8
+    , rio >= 0.1.12
+    , scheduler >= 1.4.2
     , servant-client >= 0.16
     , streaming >= 0.2
     , streaming-events >= 1.0

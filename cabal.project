@@ -1,0 +1,24 @@
+packages: .
+
+source-repository-package
+    type: git
+    location: https://github.com/kadena-io/chainweb-node.git
+    tag: 175f54a09f1757d9af0e57db0aedab89d0e8bfe2
+
+source-repository-package
+    type: git
+    location: https://github.com/kadena-io/pact.git
+    tag: 0bab430ade7898a6ff2607eee71e2f14b294d3e3
+
+source-repository-package
+    type: git
+    location: https://github.com/kadena-io/thyme.git
+    tag: 6ee9fcb026ebdb49b810802a981d166680d867c9
+
+source-repository-package
+    type: git
+    location: https://github.com/kadena-io/chainweb-storage.git
+    tag: 17a5fb130926582eff081eeb1b94cb6c7097c67a
+
+constraints:
+      base-unicode-symbols < 0.2.4
