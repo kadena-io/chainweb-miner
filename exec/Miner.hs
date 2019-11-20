@@ -221,7 +221,9 @@ workKey wb = do
 mining :: (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes) -> RIO Env ()
 mining go = do
     updateMap <- newUpdateMap -- TODO use a bracket
-    miningLoop updateMap go
+    miningLoop updateMap go `finally` logInfo "Miner halted."
+
+data Recovery = Irrecoverable | Recoverable
 
 -- | The inner mining loop.
 --
@@ -237,15 +239,20 @@ mining go = do
 -- at an higher rate.
 --
 miningLoop :: UpdateMap -> (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes) -> RIO Env ()
-miningLoop updateMap inner = mask $ \umask ->
-    void (go umask) `finally` logInfo "Mining halted."
+miningLoop updateMap inner = mask go
   where
-    go :: (RIO Env () -> RIO Env a) -> RIO Env b
-    go umask = do
-        forever (umask loopBody) `catchAny` \e -> do
-            logWarn "Error in mining loop. Trying again ..."
-            logDebug $ display e
-        go umask
+    go :: (RIO Env () -> RIO Env a) -> RIO Env ()
+    go umask = (forever (umask loopBody) `catches` handlers) >>= \case
+        Irrecoverable -> pure ()
+        Recoverable   -> go umask
+      where
+        handlers =
+            [ Handler $ \(e :: IOException) -> logError (display e) >> pure Irrecoverable
+            , Handler $ \(e :: SomeException) -> do
+                logWarn "Some general error in mining loop. Trying again..."
+                logDebug $ display e
+                pure Recoverable
+            ]
 
     loopBody :: RIO Env ()
     loopBody = do
