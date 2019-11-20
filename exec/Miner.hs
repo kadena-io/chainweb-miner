@@ -90,27 +90,21 @@ import           Chainweb.Miner.RestAPI.Client (solvedClient, workClient)
 import           Chainweb.RestAPI.NodeInfo (NodeInfo(..), NodeInfoApi)
 import           Chainweb.Utils (runGet)
 import           Chainweb.Version
+import           Miner.Balance
 import           Miner.Types
 import           Miner.Updates
 import qualified Pact.Types.Crypto as P hiding (PublicKey)
 import qualified Pact.Types.Util as P
 
-import Miner.BalanceChecker
-
 --------------------------------------------------------------------------------
 -- Work
 
 main :: IO ()
-main = do
-    execParser opts >>= \case
-        cmd@(CPU _ cargs) -> work cmd cargs >> exitFailure
-        cmd@(GPU _ cargs) -> work cmd cargs >> exitFailure
-        Otherwise o ->
-          case o of
-            Keys -> genKeys
-            Balance url minerAccountName ->
-              getBalances url minerAccountName
-
+main = execParser opts >>= \case
+    cmd@(CPU _ cargs) -> work cmd cargs >> exitFailure
+    cmd@(GPU _ cargs) -> work cmd cargs >> exitFailure
+    Otherwise Keys -> genKeys
+    Otherwise (Balance url account) -> getBalances url account
   where
     opts :: ParserInfo Command
     opts = info (pCommand <**> helper)
@@ -152,7 +146,7 @@ scheme :: Env -> (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes)
 scheme env = case envCmd env of
     CPU e _ -> cpu e
     GPU e _ -> gpu e
-    _ -> error "Impossible: You shouldn't reach this case."
+    _       -> error "Impossible: You shouldn't reach this case."
 
 genKeys :: IO ()
 genKeys = do

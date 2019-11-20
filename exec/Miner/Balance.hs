@@ -1,40 +1,34 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeApplications  #-}
 
-module BalanceChecker where
+module Miner.Balance where
 
-import Data.Aeson
-import Data.Decimal
-import Data.Default
-import Data.Semigroup.Foldable
-import Data.List (sort)
-import Data.These
+import           Data.Aeson
+import           Data.Decimal
+import           Data.Default
 import qualified Data.DList as D
+import           Data.List (sort)
 import qualified Data.List.NonEmpty as NEL
-import Network.HTTP.Client
-import Network.HTTP.Client.TLS
-
-import RIO
+import           Data.Semigroup.Foldable
+import           Data.These
+import           Network.HTTP.Client
+import           Network.HTTP.Client.TLS
+import           RIO
 import qualified RIO.Text as T
-import Servant.Client
+import           Servant.Client
+import           Text.Printf
 
-import Text.Printf
+-- internal modules
 
-import Utils
-
--- pact imports
-
-import Pact.ApiReq
-import Pact.Types.Exp (Literal(..))
-import Pact.Types.PactValue (PactValue(..))
+import           Chainweb.ChainId
+import           Chainweb.Pact.RestAPI.Client
+import           Chainweb.RestAPI.NodeInfo (NodeInfo(..), NodeInfoApi)
+import           Chainweb.Utils
+import           Miner.Types
+import           Pact.ApiReq
 import qualified Pact.Types.Command as P (CommandResult(..), PactResult(..))
-
--- chainweb imports
-
-import Chainweb.Pact.RestAPI.Client
-import Chainweb.RestAPI.NodeInfo (NodeInfo(..), NodeInfoApi)
-import Chainweb.Utils
-import Chainweb.ChainId
+import           Pact.Types.Exp (Literal(..))
+import           Pact.Types.PactValue (PactValue(..))
 
 getBalances :: BaseUrl -> Text -> IO ()
 getBalances url mi = do
@@ -53,10 +47,10 @@ getBalances url mi = do
         total <- foldM printBalance 0 balances
         printf $ "Total =>  ₭" <> sshow (roundTo 12 total) <> "\n"
   where
-    printer (a, b) = printf $ (T.unpack $ toBalanceMsg a b) <> ".\n"
-    errPrinter (a,b) = printf $ (T.unpack $ toErrMsg a b) <> ".\n"
+    printer (a, b) = printf $ T.unpack (toBalanceMsg a b) <> ".\n"
+    errPrinter (a,b) = printf $ T.unpack (toErrMsg a b) <> ".\n"
     printBalance :: Decimal -> (Text, Decimal) -> IO Decimal
-    printBalance tot (c, bal) = tot + bal <$ printf ((T.unpack $ toBalanceMsg c bal) <> "\n")
+    printBalance tot (c, bal) = tot + bal <$ printf (T.unpack (toBalanceMsg c bal) <> "\n")
     cenv m = ClientEnv m url Nothing
     mConc as f = runConcurrently $ foldMap1 (Concurrently . f) as
 
@@ -73,7 +67,7 @@ getBalances url mi = do
     toLocalResult c r =
       case r of
         Right res -> convertResult c $ P._crResult res
-        Left l -> This $ D.singleton (c, Client l)
+        Left l    -> This $ D.singleton (c, Client l)
 
     convertResult c (P.PactResult result) =
        case result of
@@ -109,3 +103,8 @@ toBalanceMsg cidtext bal =
     <> " => "
     <> "₭"
     <> sshow (roundTo 12 bal)
+
+data LocalCmdError
+  = Client ClientError
+  | LookupError Text
+  | PactResponseError Text
