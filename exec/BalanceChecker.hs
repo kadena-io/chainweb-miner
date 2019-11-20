@@ -51,12 +51,12 @@ getBalances url mi = do
       That balances -> do
         printf "-- Retrieved Balances -- \n"
         total <- foldM printBalance 0 balances
-        printf $ "Your total is ₭" <> sshow (roundTo 12 total) <> ".\n"
+        printf $ "Total =>  ₭" <> sshow (roundTo 12 total) <> "\n"
   where
-    printer (a, b) = printf $ T.unpack $ toBalanceMsg a mi b
-    errPrinter (a,b) = printf $ T.unpack $ toErrMsg a b
+    printer (a, b) = printf $ (T.unpack $ toBalanceMsg a b) <> ".\n"
+    errPrinter (a,b) = printf $ (T.unpack $ toErrMsg a b) <> ".\n"
     printBalance :: Decimal -> (Text, Decimal) -> IO Decimal
-    printBalance tot (c, bal) = tot + bal <$ printf (T.unpack $ toBalanceMsg c mi bal)
+    printBalance tot (c, bal) = tot + bal <$ printf ((T.unpack $ toBalanceMsg c bal) <> "\n")
     cenv m = ClientEnv m url Nothing
     mConc as f = runConcurrently $ foldMap1 (Concurrently . f) as
 
@@ -102,11 +102,10 @@ toErrMsg c (PactResponseError err) = mconcat
     , "https://github.com/kadena-io/chainweb-node/issues."
     ]
 
-toBalanceMsg :: Text -> Text -> Decimal -> Text
-toBalanceMsg cidtext account bal =
-    "Balance on chain "
+toBalanceMsg :: Text -> Decimal -> Text
+toBalanceMsg cidtext bal =
+    "Chain "
     <> cidtext
-    <> " for "
-    <> account
-    <> " is ₭"
+    <> " => "
+    <> "₭"
     <> sshow (roundTo 12 bal)

@@ -44,7 +44,7 @@ executable chainweb-miner
     , connection >= 0.2
     , data-default >=0.7
     , dlist >= 0.8
-    , semigroupoids
+    , semigroupoids >= 5
     , generic-lens >= 1.2
     , http-client >= 0.6
     , http-client-tls >= 0.3
