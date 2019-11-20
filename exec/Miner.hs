@@ -1,6 +1,5 @@
 {-# LANGUAGE BangPatterns        #-}
 {-# LANGUAGE DataKinds           #-}
-{-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE MultiWayIf          #-}
@@ -63,28 +62,21 @@ module Main ( main ) where
 
 import           Control.Retry
 import           Control.Scheduler hiding (traverse_)
-import           Data.Default (def)
-import           Data.Generics.Product.Fields (field)
-import           Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
+import           Data.Time.Clock.POSIX (getPOSIXTime)
 import           Data.Tuple.Strict (T2(..), T3(..))
 import           Network.Connection (TLSSettings(..))
 import           Network.HTTP.Client hiding (Proxy(..), responseBody)
 import           Network.HTTP.Client.TLS (mkManagerSettings)
 import           Network.HTTP.Types.Status (Status(..))
-import           Network.Wai.EventSource (ServerEvent(..))
-import           Network.Wai.EventSource.Streaming (withEvents)
 import           Options.Applicative
 import           RIO
 import qualified RIO.ByteString as B
 import qualified RIO.ByteString.Lazy as BL
-import           RIO.Char (isHexDigit)
 import           RIO.List.Partial (head)
 import qualified RIO.NonEmpty as NEL
 import qualified RIO.NonEmpty.Partial as NEL
-import qualified RIO.Set as S
 import qualified RIO.Text as T
 import           Servant.Client
-import qualified Streaming.Prelude as SP
 import qualified System.Path as Path
 import qualified System.Random.MWC as MWC
 import           Text.Printf (printf)
@@ -93,141 +85,15 @@ import           Text.Printf (printf)
 
 import           Chainweb.BlockHeader
 import           Chainweb.BlockHeader.Validation (prop_block_pow)
-import           Chainweb.HostAddress (HostAddress, hostAddressToBaseUrl)
 import           Chainweb.Miner.Core
-import           Chainweb.Miner.Pact (Miner(..), MinerKeys(..))
 import           Chainweb.Miner.RestAPI.Client (solvedClient, workClient)
 import           Chainweb.RestAPI.NodeInfo (NodeInfo(..), NodeInfoApi)
-import           Chainweb.Utils (runGet, textOption, toText)
+import           Chainweb.Utils (runGet)
 import           Chainweb.Version
-
+import           Miner.Types
+import           Miner.Updates
 import qualified Pact.Types.Crypto as P hiding (PublicKey)
-import qualified Pact.Types.Term as P
 import qualified Pact.Types.Util as P
-
---------------------------------------------------------------------------------
--- CLI
-
--- | Result of parsing commandline flags.
---
-data ClientArgs = ClientArgs
-    { ll           :: !LogLevel
-    , coordinators :: ![BaseUrl]
-    , miner        :: !Miner
-    , chainid      :: !(Maybe ChainId) }
-    deriving stock (Generic)
-
--- | The top-level git-style CLI "command" which determines which mining
--- paradigm to follow.
---
-data Command = CPU CPUEnv ClientArgs | GPU GPUEnv ClientArgs | Keys
-
-newtype CPUEnv = CPUEnv { cores :: Word16 }
-
-data GPUEnv = GPUEnv
-    { envMinerPath :: Text
-    , envMinerArgs :: [Text]
-    } deriving stock (Generic)
-
-data Env = Env
-    { envGen         :: !MWC.GenIO
-    , envMgr         :: !Manager
-    , envLog         :: !LogFunc
-    , envCmd         :: !Command
-    , envArgs        :: !ClientArgs
-    , envHashes      :: IORef Word64
-    , envSecs        :: IORef Word64
-    , envLastSuccess :: IORef POSIXTime
-    , envUrls        :: IORef (NonEmpty (T2 BaseUrl ChainwebVersion)) }
-    deriving stock (Generic)
-
-instance HasLogFunc Env where
-    logFuncL = field @"envLog"
-
-pClientArgs :: Parser ClientArgs
-pClientArgs = ClientArgs <$> pLog <*> some pUrl <*> pMiner <*> pChainId
-
-pCommand :: Parser Command
-pCommand = hsubparser
-    (  command "cpu" (info cpuOpts (progDesc "Perform multicore CPU mining"))
-    <> command "gpu" (info gpuOpts (progDesc "Perform GPU mining"))
-    <> command "keys" (info keysOpts (progDesc "Generate public/private key pair"))
-    )
-
-pMinerPath :: Parser Text
-pMinerPath = textOption
-    (long "miner-path" <> help "Path to chainweb-gpu-miner executable")
-
-pMinerArgs :: Parser [Text]
-pMinerArgs = T.words <$> pMinerArgs0
-  where
-    pMinerArgs0 :: Parser T.Text
-    pMinerArgs0 = textOption
-        (long "miner-args" <> value "" <> help "Extra miner arguments")
-
-pGpuEnv :: Parser GPUEnv
-pGpuEnv = GPUEnv <$> pMinerPath <*> pMinerArgs
-
-gpuOpts :: Parser Command
-gpuOpts = liftA2 GPU pGpuEnv pClientArgs
-
-cpuOpts :: Parser Command
-cpuOpts = liftA2 (CPU . CPUEnv) pCores pClientArgs
-
-keysOpts :: Parser Command
-keysOpts = pure Keys
-
-pCores :: Parser Word16
-pCores = option auto
-    (long "cores" <> metavar "COUNT" <> value 1
-     <> help "Number of CPU cores to use (default: 1)")
-
-pLog :: Parser LogLevel
-pLog = option (eitherReader l)
-    (long "log-level" <> metavar "debug|info|warn|error" <> value LevelInfo
-    <> help "The minimum level of log messages to display (default: info)")
-  where
-    l :: String -> Either String LogLevel
-    l "debug" = Right LevelDebug
-    l "info"  = Right LevelInfo
-    l "warn"  = Right LevelWarn
-    l "error" = Right LevelError
-    l _       = Left "Must be one of debug|info|warn|error"
-
-pUrl :: Parser BaseUrl
-pUrl = hostAddressToBaseUrl Https <$> hadd
-  where
-    hadd :: Parser HostAddress
-    hadd = textOption
-        (long "node" <> metavar "<HOSTNAME:PORT>"
-        <> help "Remote address of Chainweb Node to send mining results to")
-
-pChainId :: Parser (Maybe ChainId)
-pChainId = optional $ textOption
-    (long "chain" <> metavar "CHAIN-ID"
-     <> help "Prioritize work requests for a specific chain")
-
-pMiner :: Parser Miner
-pMiner = Miner
-    <$> strOption (long "miner-account" <> help "Coin Contract account name of Miner")
-    <*> (MinerKeys <$> pks)
-  where
-    pks :: Parser P.KeySet
-    pks = P.KeySet <$> (fmap S.fromList $ some pKey) <*> pPred
-
-pKey :: Parser P.PublicKey
-pKey = option k (long "miner-key"
-    <> help "Public key of the account to send rewards (can pass multiple times)")
-  where
-    k :: ReadM P.PublicKey
-    k = eitherReader $ \s -> do
-        unless (length s == 64 && all isHexDigit s)
-            . Left $ "Public Key " <> s <> " is not valid."
-        Right $ fromString s
-
-pPred :: Parser P.Name
-pPred = (\s -> P.Name $ P.BareName s def) <$>
-    strOption (long "miner-pred" <> value "keys-all" <> help "Keyset predicate")
 
 --------------------------------------------------------------------------------
 -- Work
@@ -276,7 +142,7 @@ run :: RIO Env ()
 run = do
     env <- ask
     logInfo "Starting Miner."
-    getWork >>= traverse_ (mining (scheme env))
+    mining (scheme env)
 
 scheme :: Env -> (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes)
 scheme env = case envCmd env of
@@ -331,80 +197,95 @@ getWork = do
         a = envArgs e
         m = envMgr e
 
+-- -------------------------------------------------------------------------- --
+-- Mining
+
+workKey :: WorkBytes -> RIO Env UpdateKey
+workKey wb = do
+    e <- ask
+    T2 url _ <- NEL.head <$> readIORef (envUrls e)
+    cid <- liftIO $ chain cbytes
+    return $! UpdateKey
+        { _updateKeyChainId = cid
+        , _updateKeyHost = baseUrlHost url
+        , _updateKeyPort = baseUrlPort url
+        }
+  where
+    T3 cbytes _ _ = unWorkBytes wb
+
 -- | A supervisor thread that listens for new work and manages mining threads.
 --
-mining :: (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes) -> WorkBytes -> RIO Env ()
-mining go wb = do
-    race updateSignal (go tbytes hbytes) >>= traverse_ miningSuccess
-    getWork >>= traverse_ (mining go)
+-- TODO: use exponential backoff instead of fixed delay when retrying.
+-- (restart retry sequence when the maximum retry count it reached)
+--
+mining :: (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes) -> RIO Env ()
+mining go = do
+    updateMap <- newUpdateMap -- TODO use a bracket
+    miningLoop updateMap go
+
+-- | The inner mining loop.
+--
+-- It uses 'getWork' to obtain new work and starts mining. If a block is solved it
+-- calls 'miningSuccess' and loops around.
+--
+-- It also starts over with new work when an update is triggered.
+--
+-- NOTE: if this fails continuously, e.g. because of a miss-configured or buggy
+-- miner, this function will spin forever!
+--
+-- TODO: add rate limiting for failures and raise an error if the function fails
+-- at an higher rate.
+--
+miningLoop :: UpdateMap -> (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes) -> RIO Env ()
+miningLoop updateMap inner = mask $ \umask ->
+    void (go umask) `finally` logInfo "Mining halted."
   where
-    T3 (ChainBytes cbs) tbytes hbytes@(HeaderBytes hbs) = unWorkBytes wb
+    go :: (RIO Env () -> RIO Env a) -> RIO Env b
+    go umask = do
+        forever (umask loopBody) `catchAny` \e -> do
+            logWarn "Error in mining loop. Trying again ..."
+            logDebug $ display e
+        go umask
 
-    chain :: IO Int
-    chain = chainIdInt <$> runGet decodeChainId cbs
-
-    height :: IO Word64
-    height = _height <$> runGet decodeBlockHeight (B.take 8 $ B.drop 258 hbs)
-
-    -- TODO Rework to use Servant's streaming? Otherwise I can't use the
-    -- convenient client function here.
-    updateSignal :: RIO Env ()
-    updateSignal = catchAny f $ \se -> do
-        logWarn "Couldn't connect to update stream. Trying again..."
-        logDebug $ display se
-        threadDelay 1000000  -- One second
-        updateSignal
+    loopBody :: RIO Env ()
+    loopBody = do
+        w <- getWork >>= \case
+            Nothing -> exitFailure
+            Just x -> return x
+        let T3 cbytes tbytes hbytes = unWorkBytes w
+        cid <- liftIO $ chainInt cbytes
+        updateKey <- workKey w
+        logDebug . display . T.pack $ printf "Chain %d: Start mining on new work item." cid
+        withPreemption updateMap updateKey (inner tbytes hbytes) >>= \case
+            Right a -> miningSuccess w a
+            Left () -> logDebug "Mining loop was preempted. Getting updated work ..."
       where
-        f :: RIO Env ()
-        f = do
+        -- | If the `go` call won the `race`, this function yields the result back
+        -- to some "mining coordinator" (likely a chainweb-node).
+        --
+        miningSuccess :: WorkBytes -> HeaderBytes -> RIO Env ()
+        miningSuccess w h = do
             e <- ask
-            u <- NEL.head <$> readIORef (envUrls e)
-            liftIO $ withEvents (req u) (envMgr e) (void . SP.head_ . SP.filter realEvent)
-            cid <- liftIO chain
-            logDebug . display . T.pack $ printf "Chain %d: Current work was preempted." cid
-
-        -- TODO Formalize the signal content a bit more?
-        realEvent :: ServerEvent -> Bool
-        realEvent ServerEvent{} = True
-        realEvent _             = False
-
-        -- TODO This is an uncomfortable URL hardcoding.
-        req :: T2 BaseUrl ChainwebVersion -> Request
-        req (T2 u v) = defaultRequest
-            { host = encodeUtf8 . T.pack . baseUrlHost $ u
-            , path = "chainweb/0.0/" <> encodeUtf8 (toText v) <> "/mining/updates"
-            , port = baseUrlPort u
-            , secure = True
-            , method = "GET"
-            , requestBody = RequestBodyBS cbs
-            , responseTimeout = responseTimeoutNone }
-
-    -- | If the `go` call won the `race`, this function yields the result back
-    -- to some "mining coordinator" (likely a chainweb-node). If `updateSignal`
-    -- won the race instead, then the `go` call is automatically cancelled.
-    --
-    miningSuccess :: HeaderBytes -> RIO Env ()
-    miningSuccess h = do
-      e <- ask
-      secs <- readIORef (envSecs e)
-      hashes <- readIORef (envHashes e)
-      before <- readIORef (envLastSuccess e)
-      now <- liftIO getPOSIXTime
-      writeIORef (envLastSuccess e) now
-      let !m = envMgr e
-          !r = (fromIntegral hashes :: Double) / max 1 (fromIntegral secs) / 1000000
-          !d = ceiling (now - before) :: Int
-      cid <- liftIO chain
-      hgh <- liftIO height
-      logInfo . display . T.pack $
-          printf "Chain %d: Mined block at Height %d. (%.2f MH/s - %ds since last)" cid hgh r d
-      T2 url v <- NEL.head <$> readIORef (envUrls e)
-      res <- liftIO . runClientM (solvedClient v h) $ ClientEnv m url Nothing
-      when (isLeft res) $ logWarn "Failed to submit new BlockHeader!"
+            secs <- readIORef (envSecs e)
+            hashes <- readIORef (envHashes e)
+            before <- readIORef (envLastSuccess e)
+            now <- liftIO getPOSIXTime
+            writeIORef (envLastSuccess e) now
+            let !m = envMgr e
+                !r = (fromIntegral hashes :: Double) / max 1 (fromIntegral secs) / 1000000
+                !d = ceiling (now - before) :: Int
+            cid <- liftIO $ chainInt cbytes
+            hgh <- liftIO $ height hbytes
+            logInfo . display . T.pack $
+                printf "Chain %d: Mined block at Height %d. (%.2f MH/s - %ds since last)" cid hgh r d
+            T2 url v <- NEL.head <$> readIORef (envUrls e)
+            res <- liftIO . runClientM (solvedClient v h) $ ClientEnv m url Nothing
+            when (isLeft res) $ logWarn "Failed to submit new BlockHeader!"
+          where
+            T3 cbytes _ hbytes = unWorkBytes w
 
 cpu :: CPUEnv -> TargetBytes -> HeaderBytes -> RIO Env HeaderBytes
 cpu cpue tbytes hbytes = do
-    logDebug "Mining a new Block"
     !start <- liftIO getPOSIXTime
     e <- ask
     T2 _ v <- NEL.head <$> readIORef (envUrls e)
@@ -449,3 +330,15 @@ gpu ge@(GPUEnv mpath margs) t@(TargetBytes target) h@(HeaderBytes blockbytes) = 
                  modifyIORef' (envHashes e) (+ numNonces)
                  modifyIORef' (envSecs e) (+ secs)
                  pure $! HeaderBytes newBytes
+
+-- -------------------------------------------------------------------------- --
+-- Utils
+
+chain :: MonadThrow m => MonadIO m => ChainBytes -> m ChainId
+chain (ChainBytes cbs) = runGet decodeChainId cbs
+
+chainInt :: MonadThrow m => MonadIO m => ChainBytes -> m Int
+chainInt c = chainIdInt <$> chain c
+
+height :: MonadThrow m => MonadIO m => HeaderBytes -> m Word64
+height (HeaderBytes hbs) = _height <$> runGet decodeBlockHeight (B.take 8 $ B.drop 258 hbs)
