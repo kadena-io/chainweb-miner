@@ -105,7 +105,6 @@ import qualified Pact.Types.Util as P
 
 import Utils
 import BalanceChecker
--- >>>>>>> 033e0c7c27dc50f92ac98a91faeab079ebef2697
 
 --------------------------------------------------------------------------------
 -- CLI
