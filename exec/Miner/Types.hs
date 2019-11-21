@@ -16,7 +16,7 @@ module Miner.Types
   , GPUEnv(..)
   , OtherCommand(..)
     -- * miscellaneous
-  , ss
+  , tlsSettings
   ) where
 
 import           Chainweb.Utils (textOption)
@@ -181,5 +181,5 @@ balancesOpts = Balance <$> pUrl <*> pMinerName
 -- | This allows this code to accept the self-signed certificates from
 -- `chainweb-node`.
 --
-ss :: TLSSettings
-ss = TLSSettingsSimple True True True
+tlsSettings :: TLSSettings
+tlsSettings = TLSSettingsSimple True True True

@@ -115,7 +115,7 @@ work cmd cargs = do
     lopts <- setLogMinLevel (ll cargs) . setLogUseLoc False <$> logOptionsHandle stderr True
     withLogFunc lopts $ \logFunc -> do
         g <- MWC.createSystemRandom
-        m <- newManager (mkManagerSettings ss Nothing)
+        m <- newManager (mkManagerSettings tlsSettings Nothing)
         euvs <- sequence <$> traverse (nodeVer m) (coordinators cargs)
         case euvs of
             Left e -> throwString $ show e

@@ -24,7 +24,7 @@ import           Chainweb.ChainId (chainIdFromText)
 import           Chainweb.Pact.RestAPI.Client (pactLocalApiClient)
 import           Chainweb.RestAPI.NodeInfo (NodeInfo(..), NodeInfoApi)
 import           Chainweb.Utils (sshow)
-import           Miner.Types (ss)
+import           Miner.Types (tlsSettings)
 import           Pact.ApiReq
 import qualified Pact.Types.Command as P (CommandResult(..), PactResult(..))
 import           Pact.Types.Exp (Literal(..))
@@ -32,7 +32,7 @@ import           Pact.Types.PactValue (PactValue(..))
 
 getBalances :: BaseUrl -> Text -> IO ()
 getBalances url mi = do
-    balanceStmts <- newManager (mkManagerSettings ss Nothing) >>= go . cenv
+    balanceStmts <- newManager (mkManagerSettings tlsSettings Nothing) >>= go . cenv
     case balanceStmts of
       These errors balances -> do
         printf "-- Retrieved Balances -- \n"
