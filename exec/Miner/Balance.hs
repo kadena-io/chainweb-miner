@@ -45,7 +45,7 @@ getBalances url mi = do
       That balances -> do
         printf "-- Retrieved Balances -- \n"
         total <- foldM printBalance 0 balances
-        printf $ "Total =>  ₭" <> sshow (roundTo 12 total) <> "\n"
+        printf $ "Total   => ₭" <> sshow (roundTo 12 total) <> "\n"
   where
     printer (a, b) = printf $ T.unpack (toBalanceMsg a b) <> ".\n"
     errPrinter (a,b) = printf $ T.unpack (toErrMsg a b) <> ".\n"
