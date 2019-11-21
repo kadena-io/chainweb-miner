@@ -1,30 +1,30 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications  #-}
 
-module Miner.Balance where
+module Miner.Balance ( getBalances ) where
 
-import           Data.Aeson
-import           Data.Decimal
-import           Data.Default
+import           Data.Aeson (Value(..))
+import           Data.Decimal (Decimal, roundTo)
+import           Data.Default (def)
 import qualified Data.DList as D
-import           Data.List (sort)
-import qualified Data.List.NonEmpty as NEL
 import           Data.Semigroup.Foldable
-import           Data.These
+import           Data.These (These(..))
 import           Network.HTTP.Client
 import           Network.HTTP.Client.TLS
 import           RIO
+import qualified RIO.List as L
+import qualified RIO.NonEmpty.Partial as NEL
 import qualified RIO.Text as T
 import           Servant.Client
-import           Text.Printf
+import           Text.Printf (printf)
 
 -- internal modules
 
-import           Chainweb.ChainId
-import           Chainweb.Pact.RestAPI.Client
+import           Chainweb.ChainId (chainIdFromText)
+import           Chainweb.Pact.RestAPI.Client (pactLocalApiClient)
 import           Chainweb.RestAPI.NodeInfo (NodeInfo(..), NodeInfoApi)
-import           Chainweb.Utils
-import           Miner.Types
+import           Chainweb.Utils (sshow)
+import           Miner.Types (ss)
 import           Pact.ApiReq
 import qualified Pact.Types.Command as P (CommandResult(..), PactResult(..))
 import           Pact.Types.Exp (Literal(..))
@@ -58,7 +58,7 @@ getBalances url mi = do
     go env = do
       NodeInfo v _ cs _ <-
          runClientM (client (RIO.Proxy @NodeInfoApi)) env >>= either (throwString . show) return
-      mConc (NEL.fromList $ sort cs) $ \cidtext -> do
+      mConc (NEL.fromList $ L.sort cs) $ \cidtext -> do
           c <- chainIdFromText cidtext
           cmd <-
             mkExec (printf "(coin.get-balance \"%s\")" mi) Null def mempty Nothing Nothing

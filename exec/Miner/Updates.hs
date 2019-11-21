@@ -5,7 +5,12 @@
 {-# LANGUAGE NoImplicitPrelude  #-}
 {-# LANGUAGE OverloadedStrings  #-}
 
-module Miner.Updates where
+module Miner.Updates
+  ( UpdateKey(..)
+  , UpdateMap(..)
+  , newUpdateMap
+  , withPreemption
+  ) where
 
 import           Data.Tuple.Strict (T2(..))
 import           Network.HTTP.Client hiding (Proxy(..), responseBody)
