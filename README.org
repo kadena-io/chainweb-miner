@@ -10,6 +10,8 @@
     - [[#gpu-mining][GPU Mining]]
     - [[#chain-focusing][Chain Focusing]]
     - [[#log-suppression][Log Suppression]]
+    - [[#specifying-multiple-nodes][Specifying Multiple Nodes]]
+    - [[#balance-lookup][Balance Lookup]]
   - [[#troubleshooting][Troubleshooting]]
     - [[#i-mined-using-the-wrong-account-name-andor-public-key][I mined using the wrong account name and/or public key!]]
     - [[#chainweb-miner-says-that-i-mined-but-i-didnt-receive-the-reward][chainweb-miner says that I mined, but I didn't receive the reward.]]
@@ -238,7 +240,7 @@ Intent: I want a new BlockHeader to mine on.
 #+end_quote
 
 #+begin_example
-  GET /chainweb/0.0/testnet/mining/work?chain=...
+  GET /chainweb/0.0/mainnet01/mining/work?chain=...
 #+end_example
 
 Clients can optionally specify a Chain to "focus" on.
@@ -258,9 +260,9 @@ Request Body (JSON):
 Response (Octet Stream):
 
 #+begin_example
-  Work Bytes - 338 bytes
+  Work Bytes - 322 bytes
 
-  ChainBytes(4) + TargetBytes(32) + HeaderBytes(302)
+  ChainBytes(4) + TargetBytes(32) + HeaderBytes(286)
 
   The minimum information required to perform Proof-of-Work. No knowledge of
   Chainweb internals is necessary.
@@ -279,13 +281,13 @@ Intent: I solved a block - here it is.
 #+end_quote
 
 #+begin_example
-  POST /chainweb/0.0/testnet/mining/solved
+  POST /chainweb/0.0/mainnet01/mining/solved
 #+end_example
 
 Request Body (Octet Stream):
 
 #+begin_example
-  Header Bytes - 302 bytes
+  Header Bytes - 286 bytes
 
   The original work received, updated internally with the Nonce that satisfies the
   Proof-of-Work.
@@ -298,7 +300,7 @@ Intent: I am currently mining. Is the work I'm doing still worth it?
 #+end_quote
 
 #+begin_example
-  GET /chainweb/0.0/testnet/mining/updates
+  GET /chainweb/0.0/mainnet01/mining/updates
 #+end_example
 
 Request Body (Octet Stream):
