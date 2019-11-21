@@ -14,6 +14,9 @@ module Miner.Types
   , Command(..)
   , CPUEnv(..)
   , GPUEnv(..)
+  , OtherCommand(..)
+    -- * miscellaneous
+  , ss
   ) where
 
 import           Chainweb.Utils (textOption)
@@ -21,6 +24,7 @@ import           Data.Default (def)
 import           Data.Generics.Product.Fields (field)
 import           Data.Time.Clock.POSIX (POSIXTime)
 import           Data.Tuple.Strict (T2(..))
+import           Network.Connection
 import           Network.HTTP.Client hiding (Proxy(..), responseBody)
 import           Options.Applicative
 import           RIO
@@ -70,7 +74,7 @@ data ClientArgs = ClientArgs
 -- | The top-level git-style CLI "command" which determines which mining
 -- paradigm to follow.
 --
-data Command = CPU CPUEnv ClientArgs | GPU GPUEnv ClientArgs | Keys
+data Command = CPU CPUEnv ClientArgs | GPU GPUEnv ClientArgs | Otherwise OtherCommand
 
 newtype CPUEnv = CPUEnv { cores :: Word16 }
 
@@ -86,7 +90,8 @@ pCommand :: Parser Command
 pCommand = hsubparser
     (  command "cpu" (info cpuOpts (progDesc "Perform multicore CPU mining"))
     <> command "gpu" (info gpuOpts (progDesc "Perform GPU mining"))
-    <> command "keys" (info keysOpts (progDesc "Generate public/private key pair"))
+    <> command "keys" (info (Otherwise <$> keysOpts) (progDesc "Generate public/private key pair"))
+    <> command "balance" (info (Otherwise <$> balancesOpts) (progDesc "Get balances on all chains"))
     )
 
 pMinerPath :: Parser Text
@@ -108,9 +113,6 @@ gpuOpts = liftA2 GPU pGpuEnv pClientArgs
 
 cpuOpts :: Parser Command
 cpuOpts = liftA2 (CPU . CPUEnv) pCores pClientArgs
-
-keysOpts :: Parser Command
-keysOpts = pure Keys
 
 pCores :: Parser Word16
 pCores = option auto
@@ -163,3 +165,21 @@ pKey = option k (long "miner-key"
 pPred :: Parser P.Name
 pPred = (\s -> P.Name $ P.BareName s def) <$>
     strOption (long "miner-pred" <> value "keys-all" <> help "Keyset predicate")
+
+data OtherCommand =
+  Keys | Balance BaseUrl Text
+
+keysOpts :: Parser OtherCommand
+keysOpts = pure Keys
+
+balancesOpts :: Parser OtherCommand
+balancesOpts = Balance <$> pUrl <*> pMinerName
+  where
+    pMinerName =
+      textOption (long "miner-account" <> help "Coin Contract account name of Miner")
+
+-- | This allows this code to accept the self-signed certificates from
+-- `chainweb-node`.
+--
+ss :: TLSSettings
+ss = TLSSettingsSimple True True True

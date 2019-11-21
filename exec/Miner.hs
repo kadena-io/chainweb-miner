@@ -65,7 +65,6 @@ import           Control.Retry
 import           Control.Scheduler hiding (traverse_)
 import           Data.Time.Clock.POSIX (getPOSIXTime)
 import           Data.Tuple.Strict (T2(..), T3(..))
-import           Network.Connection (TLSSettings(..))
 import           Network.HTTP.Client hiding (Proxy(..), responseBody)
 import           Network.HTTP.Client.TLS (mkManagerSettings)
 import           Network.HTTP.Types.Status (Status(..))
@@ -91,6 +90,7 @@ import           Chainweb.Miner.RestAPI.Client (solvedClient, workClient)
 import           Chainweb.RestAPI.NodeInfo (NodeInfo(..), NodeInfoApi)
 import           Chainweb.Utils (runGet)
 import           Chainweb.Version
+import           Miner.Balance
 import           Miner.Types
 import           Miner.Updates
 import qualified Pact.Types.Crypto as P hiding (PublicKey)
@@ -101,9 +101,10 @@ import qualified Pact.Types.Util as P
 
 main :: IO ()
 main = execParser opts >>= \case
-    Keys -> genKeys
     cmd@(CPU _ cargs) -> work cmd cargs >> exitFailure
     cmd@(GPU _ cargs) -> work cmd cargs >> exitFailure
+    Otherwise Keys -> genKeys
+    Otherwise (Balance url account) -> getBalances url account
   where
     opts :: ParserInfo Command
     opts = info (pCommand <**> helper)
@@ -128,11 +129,7 @@ work cmd cargs = do
     nodeVer :: Manager -> BaseUrl -> IO (Either ClientError (T2 BaseUrl ChainwebVersion))
     nodeVer m baseurl = (T2 baseurl <$>) <$> getInfo m baseurl
 
-    -- | This allows this code to accept the self-signed certificates from
-    -- `chainweb-node`.
-    --
-    ss :: TLSSettings
-    ss = TLSSettingsSimple True True True
+
 
 getInfo :: Manager -> BaseUrl -> IO (Either ClientError ChainwebVersion)
 getInfo m url = fmap nodeVersion <$> runClientM (client (Proxy @NodeInfoApi)) cenv
@@ -149,7 +146,7 @@ scheme :: Env -> (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes)
 scheme env = case envCmd env of
     CPU e _ -> cpu e
     GPU e _ -> gpu e
-    Keys    -> error "Impossible: You shouldn't reach this case."
+    _       -> error "Impossible: You shouldn't reach this case."
 
 genKeys :: IO ()
 genKeys = do
