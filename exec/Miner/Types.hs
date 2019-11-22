@@ -51,10 +51,10 @@ data Env = Env
     , envLog         :: !LogFunc
     , envCmd         :: !Command
     , envArgs        :: !ClientArgs
-    , envHashes      :: IORef Word64
-    , envSecs        :: IORef Word64
-    , envLastSuccess :: IORef POSIXTime
-    , envUrls        :: IORef (NonEmpty (T2 BaseUrl ChainwebVersion)) }
+    , envHashes      :: !(IORef Word64)
+    , envSecs        :: !(IORef Word64)
+    , envLastSuccess :: !(IORef POSIXTime)
+    , envUrls        :: !(IORef (NonEmpty (T2 BaseUrl ChainwebVersion))) }
     deriving stock (Generic)
 
 instance HasLogFunc Env where
@@ -80,16 +80,16 @@ data Command = CPU CPUEnv ClientArgs | GPU GPUEnv ClientArgs | OpenCL OpenCLEnv 
 newtype CPUEnv = CPUEnv { cores :: Word16 }
 
 data GPUEnv = GPUEnv
-    { envMinerPath :: Text
-    , envMinerArgs :: [Text]
+    { envMinerPath :: !Text
+    , envMinerArgs :: ![Text]
     } deriving stock (Generic)
 
 data OpenCLEnv = OpenCLEnv
-    { platformIndex :: Int
-    , deviceIndex :: Int
-    , globalSize :: Int
-    , localSize :: Int
-    , workSetSize :: Int
+    { platformIndex :: !Int
+    , deviceIndex :: !Int
+    , globalSize :: !Int
+    , localSize :: !Int
+    , workSetSize :: !Int
     } deriving stock (Generic)
 
 pClientArgs :: Parser ClientArgs
