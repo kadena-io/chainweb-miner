@@ -36,6 +36,7 @@ executable chainweb-miner
       Miner.Balance
       Miner.Types
       Miner.Updates
+      Miner.OpenCL
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       bytestring >= 0.10
@@ -64,3 +65,8 @@ executable chainweb-miner
     , these >= 1 && < 1.1
     , time >= 1.8
     , wai-extra >= 3.0
+    , OpenCL ^>= 1.0.3.4
+    , random ^>= 1.1
+    , ansi-wl-pprint ^>= 0.6.9
+    , text ^>= 1.2.3.1
+    , safe-exceptions ^>= 0.1.7.0
