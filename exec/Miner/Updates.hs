@@ -33,17 +33,13 @@ import           Miner.Types (Env(..), UpdateMap(..), UpdateKey(..))
 
 ---
 
--- Maintains one upstream for each url and chain
+-- | Creates a map that maintains one upstream for each chain
 --
--- TODO;
---
--- * implement reaper thread
--- * implement shutdown that closes all connections
---
-
 newUpdateMap :: MonadIO m => m UpdateMap
 newUpdateMap = UpdateMap <$> newMVar mempty
 
+-- | Reset all update streams in the map.
+--
 clearUpdateMap :: MonadUnliftIO m => UpdateMap -> m ()
 clearUpdateMap (UpdateMap um) = modifyMVar um $ \m -> do
     mapM_ (\(T2 _ a) -> cancel a) m
@@ -75,20 +71,17 @@ getUpdateVar (UpdateMap v) k = modifyMVar v $ \m -> case HM.lookup k m of
     newUpdateStream var = T2 var
         <$!> async (updateStream (_updateKeyChainId k) var)
 
--- TODO:
+-- | Run an operation that is preempted if an update event occurs.
 --
--- We don't reap old entries from the map. That's fine since the maximum
--- number of entries is bounded by the number of base urls times the number
--- of chains.
+-- Streams are restarted automatically, when they got closed by the server. We
+-- don't restart streams automatically in case of a failure, but instead throw
+-- an exception. Failures are supposed to be handled in the outer mining
+-- functions.
 --
--- We could add a counter that would reap the map from stall streams every
--- nth time getUpdateVar.
-
--- We don't restart streams automatically in case of a failure. Thus there is a
--- risk that a stream dies due an failure while a mining loop is subscribed to
--- it. We solve this by preempting the loop if we haven't seen an update after 5
--- times the block time (which will affect about 0.7% of all blocks).
-
+-- There risk that a stream stalls without explicitely failing. We solve this by
+-- preempting the loop if we haven't seen an update after 5 times the block time
+-- (which will affect about 0.7% of all blocks).
+--
 withPreemption :: UpdateKey -> RIO Env a -> RIO Env (Either () a)
 withPreemption k inner = do
     m <- asks envUpdateMap
@@ -103,6 +96,9 @@ withPreemption k inner = do
             isUpdate <- (/= cur) <$> readTVar var
             unless (isTimeout || isUpdate) retrySTM
 
+-- | Atomatically restarts the stream when the response status is 2** and throws
+-- and exception otherwise.
+--
 updateStream :: ChainId -> TVar Int -> RIO Env ()
 updateStream cid var = do
     e <- ask
@@ -124,4 +120,6 @@ updateStream cid var = do
         , method = "GET"
         , requestBody = RequestBodyBS $ runPut (encodeChainId cid)
         , responseTimeout = responseTimeoutNone
+        , checkResponse = throwErrorStatusCodes
         }
+
