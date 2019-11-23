@@ -124,7 +124,8 @@ work cmd cargs = do
                 stats <- newIORef 0
                 start <- newIORef 0
                 successStart <- getPOSIXTime >>= newIORef
-                runRIO (Env g m logFunc cmd cargs stats start successStart mUrls) run
+                updateMap <- newUpdateMap
+                runRIO (Env g m logFunc cmd cargs stats start successStart updateMap mUrls) run
   where
     nodeVer :: Manager -> BaseUrl -> IO (Either ClientError (T2 BaseUrl ChainwebVersion))
     nodeVer m baseurl = (T2 baseurl <$>) <$> getInfo m baseurl
@@ -156,7 +157,7 @@ genKeys = do
 
 -- | Attempt to get new work while obeying a sane retry policy.
 --
-getWork :: RIO Env (Maybe WorkBytes)
+getWork :: RIO Env (Maybe (T2 WorkBytes UpdateKey))
 getWork = do
     logDebug "Attempting to fetch new work from the remote Node"
     e <- ask
@@ -166,8 +167,13 @@ getWork = do
             urls <- readIORef $ envUrls e
             case NEL.nonEmpty $ NEL.tail urls of
                 Nothing   -> logError "No nodes left!" >> pure Nothing
-                Just rest -> writeIORef (envUrls e) rest >> getWork
-        Right bs -> pure $ Just bs
+                Just rest -> do
+                    clearUpdateMap =<< asks envUpdateMap
+                    writeIORef (envUrls e) rest
+                    getWork
+        Right bs -> do
+            k <- workKey bs
+            pure $ Just (T2 bs k)
   where
     -- | If we wait longer than the average block time and still can't get
     -- anything, then there's no point in continuing to wait.
@@ -195,21 +201,15 @@ getWork = do
         a = envArgs e
         m = envMgr e
 
--- -------------------------------------------------------------------------- --
--- Mining
-
 workKey :: WorkBytes -> RIO Env UpdateKey
 workKey wb = do
-    e <- ask
-    T2 url _ <- NEL.head <$> readIORef (envUrls e)
     cid <- liftIO $ chain cbytes
-    return $! UpdateKey
-        { _updateKeyChainId = cid
-        , _updateKeyHost = baseUrlHost url
-        , _updateKeyPort = baseUrlPort url
-        }
+    return $! UpdateKey { _updateKeyChainId = cid }
   where
     T3 cbytes _ _ = unWorkBytes wb
+
+-- -------------------------------------------------------------------------- --
+-- Mining
 
 -- | A supervisor thread that listens for new work and manages mining threads.
 --
@@ -217,9 +217,7 @@ workKey wb = do
 -- (restart retry sequence when the maximum retry count it reached)
 --
 mining :: (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes) -> RIO Env ()
-mining go = do
-    updateMap <- newUpdateMap -- TODO use a bracket
-    miningLoop updateMap go `finally` logInfo "Miner halted."
+mining go = miningLoop go `finally` logInfo "Miner halted."
 
 data Recovery = Irrecoverable | Recoverable
 
@@ -236,8 +234,8 @@ data Recovery = Irrecoverable | Recoverable
 -- TODO: add rate limiting for failures and raise an error if the function fails
 -- at an higher rate.
 --
-miningLoop :: UpdateMap -> (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes) -> RIO Env ()
-miningLoop updateMap inner = mask go
+miningLoop :: (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes) -> RIO Env ()
+miningLoop inner = mask go
   where
     go :: (RIO Env () -> RIO Env a) -> RIO Env ()
     go umask = (forever (umask loopBody) `catches` handlers) >>= \case
@@ -254,14 +252,13 @@ miningLoop updateMap inner = mask go
 
     loopBody :: RIO Env ()
     loopBody = do
-        w <- getWork >>= \case
+        T2 w key <- getWork >>= \case
             Nothing -> exitFailure
             Just x -> return x
         let T3 cbytes tbytes hbytes = unWorkBytes w
         cid <- liftIO $ chainInt cbytes
-        updateKey <- workKey w
         logDebug . display . T.pack $ printf "Chain %d: Start mining on new work item." cid
-        withPreemption updateMap updateKey (inner tbytes hbytes) >>= \case
+        withPreemption key (inner tbytes hbytes) >>= \case
             Right a -> miningSuccess w a
             Left () -> logDebug "Mining loop was preempted. Getting updated work ..."
       where

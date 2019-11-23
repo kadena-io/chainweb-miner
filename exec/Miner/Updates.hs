@@ -3,6 +3,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE LambdaCase         #-}
 {-# LANGUAGE NoImplicitPrelude  #-}
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings  #-}
 
 module Miner.Updates
@@ -10,6 +11,7 @@ module Miner.Updates
   , UpdateMap(..)
   , newUpdateMap
   , withPreemption
+  , clearUpdateMap
   ) where
 
 import           Data.Tuple.Strict (T2(..))
@@ -27,7 +29,7 @@ import qualified Streaming.Prelude as SP
 
 import           Chainweb.Utils (runPut, toText)
 import           Chainweb.Version (ChainId, ChainwebVersion, encodeChainId)
-import           Miner.Types (Env(..))
+import           Miner.Types (Env(..), UpdateMap(..), UpdateKey(..))
 
 ---
 
@@ -39,25 +41,26 @@ import           Miner.Types (Env(..))
 -- * implement shutdown that closes all connections
 --
 
-data UpdateKey = UpdateKey
-    { _updateKeyHost    :: !String
-    , _updateKeyPort    :: !Int
-    , _updateKeyChainId :: !ChainId }
-    deriving stock (Show, Eq, Ord, Generic)
-    deriving anyclass (Hashable)
-
-newtype UpdateMap = UpdateMap
-    { _updateMap :: MVar (HM.HashMap UpdateKey (T2 (TVar Int) (Async ())))
-    }
-
 newUpdateMap :: MonadIO m => m UpdateMap
 newUpdateMap = UpdateMap <$> newMVar mempty
 
+clearUpdateMap :: MonadUnliftIO m => UpdateMap -> m ()
+clearUpdateMap (UpdateMap um) = modifyMVar um $ \m -> do
+    mapM_ (\(T2 _ a) -> cancel a) m
+    return mempty
+
 getUpdateVar :: UpdateMap -> UpdateKey -> RIO Env (TVar Int)
 getUpdateVar (UpdateMap v) k = modifyMVar v $ \m -> case HM.lookup k m of
+
+    -- If there exists already an update stream, check that it's live, and
+    -- restart if necessary.
+    --
     Just x -> do
         n@(T2 var _) <- checkStream x
         return (HM.insert k n m, var)
+
+    -- If there isn't an update stream in the map, create a new one.
+    --
     Nothing -> do
         n@(T2 var _) <- newTVarIO 0 >>= newUpdateStream
         return (HM.insert k n m, var)
@@ -72,28 +75,29 @@ getUpdateVar (UpdateMap v) k = modifyMVar v $ \m -> case HM.lookup k m of
     newUpdateStream var = T2 var
         <$!> async (updateStream (_updateKeyChainId k) var)
 
-    -- TODO:
-    --
-    -- We don't reap old entries from the map. That's fine since the maximum
-    -- number of entries is bounded by the number of base urls times the number
-    -- of chains.
-    --
-    -- We could add a counter that would reap the map from stall streams every
-    -- nth time getUpdateVar.
+-- TODO:
+--
+-- We don't reap old entries from the map. That's fine since the maximum
+-- number of entries is bounded by the number of base urls times the number
+-- of chains.
+--
+-- We could add a counter that would reap the map from stall streams every
+-- nth time getUpdateVar.
 
-    -- We don't restart streams automatically, in order to save connections.
-    -- Thus there is a risk that a stream dies while a mining loop is subscribed
-    -- to it. We solve this by preempting the loop if we haven't seen an update
-    -- after 2 times the block time.
+-- We don't restart streams automatically in case of a failure. Thus there is a
+-- risk that a stream dies due an failure while a mining loop is subscribed to
+-- it. We solve this by preempting the loop if we haven't seen an update after 5
+-- times the block time (which will affect about 0.7% of all blocks).
 
-withPreemption :: UpdateMap -> UpdateKey -> RIO Env a -> RIO Env (Either () a)
-withPreemption m k inner = do
+withPreemption :: UpdateKey -> RIO Env a -> RIO Env (Either () a)
+withPreemption k inner = do
+    m <- asks envUpdateMap
     var <- getUpdateVar m k
     race (awaitChange var) inner
   where
     awaitChange var = do
         cur <- readTVarIO var
-        timeoutVar <- registerDelay 60000000 -- 1 minute -- FIXME this should be 2*block time
+        timeoutVar <- registerDelay (5 * 30_000_000) -- 5 times the block time ~ 0.7% of all blocks
         atomically $ do
             isTimeout <- readTVar timeoutVar
             isUpdate <- (/= cur) <$> readTVar var
@@ -103,7 +107,7 @@ updateStream :: ChainId -> TVar Int -> RIO Env ()
 updateStream cid var = do
     e <- ask
     u <- NEL.head <$> readIORef (envUrls e) -- Do we ever use something else than the head?
-    liftIO $ withEvents (req u) (envMgr e) $ \updates -> updates
+    forever $ liftIO $ withEvents (req u) (envMgr e) $ \updates -> updates
         & SP.filter realEvent
         & SP.mapM_ (\_ -> atomically $ modifyTVar' var (+ 1))
   where

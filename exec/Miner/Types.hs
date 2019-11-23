@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds          #-}
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE NoImplicitPrelude  #-}
@@ -8,6 +9,8 @@
 module Miner.Types
   ( -- * Runtime Environment
     Env(..)
+  , UpdateMap(..)
+  , UpdateKey(..)
     -- * CLI Flags
   , ClientArgs(..)
   , pCommand
@@ -22,6 +25,7 @@ module Miner.Types
 import           Chainweb.Utils (textOption)
 import           Data.Default (def)
 import           Data.Generics.Product.Fields (field)
+import qualified RIO.HashMap as HM
 import           Data.Time.Clock.POSIX (POSIXTime)
 import           Data.Tuple.Strict (T2(..))
 import           Network.Connection
@@ -42,6 +46,17 @@ import           Chainweb.Version (ChainId, ChainwebVersion)
 import qualified Pact.Types.Term as P
 
 --------------------------------------------------------------------------------
+-- Updates
+
+newtype UpdateKey = UpdateKey { _updateKeyChainId :: ChainId }
+    deriving stock (Show, Eq, Ord, Generic)
+    deriving anyclass (Hashable)
+
+newtype UpdateMap = UpdateMap
+    { _updateMap :: MVar (HM.HashMap UpdateKey (T2 (TVar Int) (Async ())))
+    }
+
+--------------------------------------------------------------------------------
 -- Runtime Environment
 
 data Env = Env
@@ -53,6 +68,7 @@ data Env = Env
     , envHashes      :: IORef Word64
     , envSecs        :: IORef Word64
     , envLastSuccess :: IORef POSIXTime
+    , envUpdateMap   :: !UpdateMap
     , envUrls        :: IORef (NonEmpty (T2 BaseUrl ChainwebVersion)) }
     deriving stock (Generic)
 
