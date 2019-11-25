@@ -27,7 +27,19 @@ import           Chainweb.Utils (runPut, toText)
 import           Chainweb.Version (ChainId, ChainwebVersion, encodeChainId)
 import           Miner.Types (Env(..), UpdateKey(..), UpdateMap(..))
 
----
+-- -------------------------------------------------------------------------- --
+-- Internal Trigger Type
+
+data Reason = Timeout | Update | StreamClosed | StreamFailed
+    deriving (Show, Eq, Ord)
+
+newtype Trigger = Trigger (STM Reason)
+
+awaitTrigger :: MonadIO m => Trigger -> m Reason
+awaitTrigger (Trigger t) = atomically t
+
+-- -------------------------------------------------------------------------- --
+-- Update Map API
 
 -- | Creates a map that maintains one upstream for each chain
 --
@@ -41,21 +53,23 @@ clearUpdateMap (UpdateMap um) = modifyMVar um $ \m -> do
     mapM_ (\(T2 _ a) -> cancel a) m
     return mempty
 
-getUpdateVar :: UpdateMap -> UpdateKey -> RIO Env (TVar Int)
-getUpdateVar (UpdateMap v) k = modifyMVar v $ \m -> case HM.lookup k m of
+getTrigger :: UpdateMap -> UpdateKey -> RIO Env Trigger
+getTrigger (UpdateMap v) k = modifyMVar v $ \m -> case HM.lookup k m of
 
     -- If there exists already an update stream, check that it's live, and
     -- restart if necessary.
     --
     Just x -> do
-        n@(T2 var _) <- checkStream x
-        return (HM.insert k n m, var)
+        n@(T2 var a) <- checkStream x
+        t <- newTrigger var a
+        return (HM.insert k n m, t)
 
     -- If there isn't an update stream in the map, create a new one.
     --
     Nothing -> do
-        n@(T2 var _) <- newTVarIO 0 >>= newUpdateStream
-        return (HM.insert k n m, var)
+        n@(T2 var a) <- newTVarIO 0 >>= newUpdateStream
+        t <- newTrigger var a
+        return (HM.insert k n m, t)
   where
     checkStream :: T2 (TVar Int) (Async ()) -> RIO Env (T2 (TVar Int) (Async ()))
     checkStream (T2 var a) = poll a >>= \case
@@ -67,6 +81,24 @@ getUpdateVar (UpdateMap v) k = modifyMVar v $ \m -> case HM.lookup k m of
     newUpdateStream var = T2 var
         <$!> async (updateStream (_updateKeyChainId k) var)
 
+    -- There are three possible outcomes
+    --
+    newTrigger :: TVar Int -> Async () -> RIO Env Trigger
+    newTrigger var a = do
+        cur <- readTVarIO var
+        timeoutVar <- registerDelay (5 * 30_000_000)
+            -- 5 times the block time ~ 0.7% of all blocks. This for detecting if
+            -- a stream gets stale without failing.
+
+        return $ Trigger $ pollSTM a >>= \case
+            Just (Right ()) -> return StreamClosed
+            Just (Left _) -> return StreamFailed
+            Nothing -> do
+                isTimeout <- readTVar timeoutVar
+                isUpdate <- (/= cur) <$> readTVar var
+                unless (isTimeout || isUpdate) retrySTM
+                return Update
+
 -- | Run an operation that is preempted if an update event occurs.
 --
 -- Streams are restarted automatically, when they got closed by the server. We
@@ -74,23 +106,21 @@ getUpdateVar (UpdateMap v) k = modifyMVar v $ \m -> case HM.lookup k m of
 -- an exception. Failures are supposed to be handled in the outer mining
 -- functions.
 --
--- There risk that a stream stalls without explicitely failing. We solve this by
--- preempting the loop if we haven't seen an update after 5 times the block time
--- (which will affect about 0.7% of all blocks).
+-- There is risk that a stream stalls without explicitely failing. We solve this
+-- by preempting the loop if we haven't seen an update after 5 times the block
+-- time (which will affect about 0.7% of all blocks).
 --
 withPreemption :: UpdateKey -> RIO Env a -> RIO Env (Either () a)
-withPreemption k inner = do
-    m <- asks envUpdateMap
-    var <- getUpdateVar m k
-    race (awaitChange var) inner
+withPreemption k inner = race awaitChange inner
   where
-    awaitChange var = do
-        cur <- readTVarIO var
-        timeoutVar <- registerDelay (5 * 30_000_000) -- 5 times the block time ~ 0.7% of all blocks
-        atomically $ do
-            isTimeout <- readTVar timeoutVar
-            isUpdate <- (/= cur) <$> readTVar var
-            unless (isTimeout || isUpdate) retrySTM
+    awaitChange = do
+        m <- asks envUpdateMap
+        trigger <- getTrigger m k
+        awaitTrigger trigger >>= \case
+            StreamClosed -> awaitChange
+            StreamFailed -> throwString "update stream failed"
+            Timeout -> throwString "timeout of update stream"
+            Update -> return ()
 
 -- | Atomatically restarts the stream when the response status is 2** and throws
 -- and exception otherwise.
