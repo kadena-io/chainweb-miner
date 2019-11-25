@@ -1,5 +1,3 @@
-{-# LANGUAGE DeriveAnyClass     #-}
-{-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE LambdaCase         #-}
 {-# LANGUAGE NoImplicitPrelude  #-}
@@ -7,9 +5,7 @@
 {-# LANGUAGE OverloadedStrings  #-}
 
 module Miner.Updates
-  ( UpdateKey(..)
-  , UpdateMap(..)
-  , newUpdateMap
+  ( newUpdateMap
   , withPreemption
   , clearUpdateMap
   ) where
@@ -29,13 +25,13 @@ import qualified Streaming.Prelude as SP
 
 import           Chainweb.Utils (runPut, toText)
 import           Chainweb.Version (ChainId, ChainwebVersion, encodeChainId)
-import           Miner.Types (Env(..), UpdateMap(..), UpdateKey(..))
+import           Miner.Types (Env(..), UpdateKey(..), UpdateMap(..))
 
 ---
 
 -- | Creates a map that maintains one upstream for each chain
 --
-newUpdateMap :: MonadIO m => m UpdateMap
+newUpdateMap :: IO UpdateMap
 newUpdateMap = UpdateMap <$> newMVar mempty
 
 -- | Reset all update streams in the map.
@@ -122,4 +118,3 @@ updateStream cid var = do
         , responseTimeout = responseTimeoutNone
         , checkResponse = throwErrorStatusCodes
         }
-
