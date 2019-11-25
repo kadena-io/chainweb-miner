@@ -129,7 +129,7 @@ updateStream :: ChainId -> TVar Int -> RIO Env ()
 updateStream cid var = do
     e <- ask
     u <- NEL.head <$> readIORef (envUrls e) -- Do we ever use something else than the head?
-    forever $ liftIO $ withEvents (req u) (envMgr e) $ \updates -> updates
+    liftIO $ withEvents (req u) (envMgr e) $ \updates -> updates
         & SP.filter realEvent
         & SP.mapM_ (\_ -> atomically $ modifyTVar' var (+ 1))
   where
