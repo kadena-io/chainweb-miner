@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns        #-}
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE DerivingStrategies  #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE MultiWayIf          #-}
 {-# LANGUAGE NoImplicitPrelude   #-}
@@ -155,25 +156,20 @@ genKeys = do
     printf "public:  %s\n" (T.unpack . P.toB16Text $ P.getPublic kp)
     printf "private: %s\n" (T.unpack . P.toB16Text $ P.getPrivate kp)
 
+newtype GetWorkFailure = GetWorkFailure SomeException
+    deriving (Show, Display)
+
+instance Exception GetWorkFailure
+
 -- | Attempt to get new work while obeying a sane retry policy.
 --
-getWork :: RIO Env (Maybe (T2 WorkBytes UpdateKey))
+getWork :: RIO Env (T2 WorkBytes UpdateKey)
 getWork = do
     logDebug "Attempting to fetch new work from the remote Node"
     e <- ask
     retrying policy (const warn) (const . liftIO $ f e) >>= \case
-        Left _ -> do
-            logWarn "Failed to fetch work! Switching nodes..."
-            urls <- readIORef $ envUrls e
-            case NEL.nonEmpty $ NEL.tail urls of
-                Nothing   -> logError "No nodes left!" >> pure Nothing
-                Just rest -> do
-                    clearUpdateMap =<< asks envUpdateMap
-                    writeIORef (envUrls e) rest
-                    getWork
-        Right bs -> do
-            k <- workKey bs
-            pure $ Just (T2 bs k)
+        Left err -> throwM $ GetWorkFailure $ toException err
+        Right bs -> T2 bs <$> workKey bs
   where
     -- | If we wait longer than the average block time and still can't get
     -- anything, then there's no point in continuing to wait.
@@ -219,7 +215,7 @@ workKey wb = do
 mining :: (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes) -> RIO Env ()
 mining go = miningLoop go `finally` logInfo "Miner halted."
 
-data Recovery = Irrecoverable | Recoverable
+data Recovery = Irrecoverable | Recoverable | NodeSwitch
 
 -- | The inner mining loop.
 --
@@ -240,21 +236,46 @@ miningLoop inner = mask go
     go :: (RIO Env () -> RIO Env a) -> RIO Env ()
     go umask = (forever (umask loopBody) `catches` handlers) >>= \case
         Irrecoverable -> pure ()
-        Recoverable   -> threadDelay 1_000_000 >> go umask
+        Recoverable -> do
+            threadDelay 1_000_000
+            go umask
+        NodeSwitch -> do
+            threadDelay 1_000_000
+            switchWork >>= \x -> when x (go umask)
       where
         handlers =
-            [ Handler $ \(e :: IOException) -> logError (display e) >> pure Irrecoverable
+            [ Handler $ \(e :: IOException) -> do
+                logError (display e)
+                pure Irrecoverable
+            , Handler $ \(e :: UpdateFailure) -> do
+                logWarn "Update stream failed. Switching nodes ..."
+                logDebug $ display e
+                pure NodeSwitch
+            , Handler $ \(e :: GetWorkFailure) -> do
+                logWarn "Failed to fetch work! Switching nodes..."
+                logDebug $ display e
+                pure NodeSwitch
             , Handler $ \(e :: SomeException) -> do
                 logWarn "Some general error in mining loop. Trying again..."
                 logDebug $ display e
                 pure Recoverable
             ]
 
+    switchWork = do
+        e <- ask
+        urls <- readIORef $ envUrls e
+        case NEL.nonEmpty $ NEL.tail urls of
+            Nothing -> do
+                logError "No nodes left!"
+                return False
+            Just rest -> do
+                clearUpdateMap =<< asks envUpdateMap
+                writeIORef (envUrls e) rest
+                return True
+
     loopBody :: RIO Env ()
     loopBody = do
-        T2 w key <- getWork >>= \case
-            Nothing -> exitFailure
-            Just x -> return x
+        T2 w key <- getWork
         let T3 cbytes tbytes hbytes = unWorkBytes w
         cid <- liftIO $ chainInt cbytes
         logDebug . display . T.pack $ printf "Chain %d: Start mining on new work item." cid

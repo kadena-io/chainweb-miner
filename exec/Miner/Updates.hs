@@ -1,4 +1,5 @@
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase         #-}
 {-# LANGUAGE NoImplicitPrelude  #-}
 {-# LANGUAGE NumericUnderscores #-}
@@ -8,17 +9,23 @@ module Miner.Updates
   ( newUpdateMap
   , withPreemption
   , clearUpdateMap
+  , UpdateFailure(..)
   ) where
 
 import           Data.Tuple.Strict (T2(..))
+
+import qualified Network.HTTP.Client as HTTP
 import           Network.HTTP.Client hiding (Proxy(..), responseBody)
 import           Network.Wai.EventSource (ServerEvent(..))
 import           Network.Wai.EventSource.Streaming (withEvents)
+
 import           RIO
 import qualified RIO.HashMap as HM
 import qualified RIO.NonEmpty as NEL
 import qualified RIO.Text as T
+
 import           Servant.Client
+
 import qualified Streaming.Prelude as SP
 
 -- internal modules
@@ -30,8 +37,8 @@ import           Miner.Types (Env(..), UpdateKey(..), UpdateMap(..))
 -- -------------------------------------------------------------------------- --
 -- Internal Trigger Type
 
-data Reason = Timeout | Update | StreamClosed | StreamFailed
-    deriving (Show, Eq, Ord)
+data Reason = Timeout | Update | StreamClosed | StreamFailed SomeException
+    deriving (Show)
 
 newtype Trigger = Trigger (STM Reason)
 
@@ -40,6 +47,11 @@ awaitTrigger (Trigger t) = atomically t
 
 -- -------------------------------------------------------------------------- --
 -- Update Map API
+
+newtype UpdateFailure = UpdateFailure T.Text
+    deriving (Show, Eq, Ord, Display)
+
+instance Exception UpdateFailure
 
 -- | Creates a map that maintains one upstream for each chain
 --
@@ -92,7 +104,7 @@ getTrigger (UpdateMap v) k = modifyMVar v $ \m -> case HM.lookup k m of
 
         return $ Trigger $ pollSTM a >>= \case
             Just (Right ()) -> return StreamClosed
-            Just (Left _) -> return StreamFailed
+            Just (Left e) -> return $ StreamFailed e
             Nothing -> do
                 isTimeout <- readTVar timeoutVar
                 isUpdate <- (/= cur) <$> readTVar var
@@ -118,9 +130,13 @@ withPreemption k inner = race awaitChange inner
         trigger <- getTrigger m k
         awaitTrigger trigger >>= \case
             StreamClosed -> awaitChange
-            StreamFailed -> throwString "update stream failed"
-            Timeout -> throwString "timeout of update stream"
+            StreamFailed e -> throwM $ UpdateFailure $ "update stream failed: " <> errMsg e
+            Timeout -> throwM $ UpdateFailure $ "timeout of update stream"
             Update -> return ()
+
+    errMsg e = case fromException e of
+        Just (HTTP.HttpExceptionRequest _ ex) -> T.pack $ show ex
+        _ -> T.pack $ show e
 
 -- | Atomatically restarts the stream when the response status is 2** and throws
 -- and exception otherwise.
