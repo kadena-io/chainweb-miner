@@ -1,16 +1,16 @@
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE DataKinds           #-}
-{-# LANGUAGE DerivingStrategies  #-}
+{-# LANGUAGE BangPatterns               #-}
+{-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE MultiWayIf          #-}
-{-# LANGUAGE NoImplicitPrelude   #-}
-{-# LANGUAGE NumericUnderscores  #-}
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE RankNTypes          #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
-{-# LANGUAGE TypeOperators       #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE MultiWayIf                 #-}
+{-# LANGUAGE NoImplicitPrelude          #-}
+{-# LANGUAGE NumericUnderscores         #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE TypeOperators              #-}
 
 -- |
 -- Module: Main
@@ -73,7 +73,7 @@ import           Options.Applicative
 import           RIO
 import qualified RIO.ByteString as B
 import qualified RIO.ByteString.Lazy as BL
-import           RIO.List.Partial (head)
+import           RIO.List.Partial (head, (!!))
 import qualified RIO.NonEmpty as NEL
 import qualified RIO.NonEmpty.Partial as NEL
 import qualified RIO.Text as T
@@ -92,6 +92,7 @@ import           Chainweb.RestAPI.NodeInfo (NodeInfo(..), NodeInfoApi)
 import           Chainweb.Utils (runGet)
 import           Chainweb.Version
 import           Miner.Balance
+import           Miner.OpenCL
 import           Miner.Types
 import           Miner.Updates
 import qualified Pact.Types.Crypto as P hiding (PublicKey)
@@ -104,6 +105,7 @@ main :: IO ()
 main = execParser opts >>= \case
     cmd@(CPU _ cargs) -> work cmd cargs >> exitFailure
     cmd@(GPU _ cargs) -> work cmd cargs >> exitFailure
+    cmd@(OpenCL _ cargs) -> work cmd cargs >> exitFailure
     Otherwise Keys -> genKeys
     Otherwise (Balance url account) -> getBalances url account
   where
@@ -146,9 +148,10 @@ run = do
 
 scheme :: Env -> (TargetBytes -> HeaderBytes -> RIO Env HeaderBytes)
 scheme env = case envCmd env of
-    CPU e _ -> cpu e
-    GPU e _ -> gpu e
-    _       -> error "Impossible: You shouldn't reach this case."
+    CPU e _    -> cpu e
+    GPU e _    -> gpu e
+    OpenCL e _ -> opencl e
+    _          -> error "Impossible: You shouldn't reach this case."
 
 genKeys :: IO ()
 genKeys = do
@@ -353,6 +356,49 @@ gpu ge@(GPUEnv mpath margs) t@(TargetBytes target) h@(HeaderBytes blockbytes) = 
                  modifyIORef' (envHashes e) (+ numNonces)
                  modifyIORef' (envSecs e) (+ secs)
                  pure $! HeaderBytes newBytes
+
+opencl :: OpenCLEnv -> TargetBytes -> HeaderBytes -> RIO Env HeaderBytes
+opencl oce t h@(HeaderBytes blockbytes) = do
+    platforms <- liftIO $ queryAllOpenCLDevices
+    when (platformIndex oce >= length platforms) $ do
+        logError . display . T.pack $
+            "Selected platform index " <> show (platformIndex oce)
+         <> " but there are only " <> show (length platforms) <> " of them."
+        exitFailure
+    let platform = platforms !! platformIndex oce
+    let devices = platformDevices platform
+    when (deviceIndex oce >= length devices) $ do
+        logError . display . T.pack $
+            "Selected device index " <> show (deviceIndex oce)
+         <> " but there are only " <> show (length devices) <> " of them on the selected platform."
+        exitFailure
+    let device = devices !! deviceIndex oce
+    loop device
+  where
+    loop :: OpenCLDevice -> RIO Env HeaderBytes
+    loop device = do
+        e <- ask
+        res <- try $ liftIO $ openCLMiner oce device t h
+        case res of
+            Left (err :: SomeException) -> do
+                logError . display . T.pack $ "Error running OpenCL miner: " <> show err
+                throwM err
+            Right (MiningResult nonceBytes numNonces hps _) -> do
+                let newBytes = nonceBytes <> B.drop 8 blockbytes
+                    secs = numNonces `div` max 1 hps
+
+                -- FIXME Consider removing this check if during later benchmarking it
+                -- proves to be an issue.
+                bh <- runGet decodeBlockHeaderWithoutHash newBytes
+
+                if | not (prop_block_pow bh) -> do
+                        logError "Bad nonce returned from OpenCL miner!"
+                        loop device
+                    | otherwise -> do
+                        modifyIORef' (envHashes e) (+ numNonces)
+                        modifyIORef' (envSecs e) (+ secs)
+                        pure $! HeaderBytes newBytes
+
 
 -- -------------------------------------------------------------------------- --
 -- Utils

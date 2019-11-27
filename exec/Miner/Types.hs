@@ -1,5 +1,5 @@
 {-# LANGUAGE DataKinds          #-}
-{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE NoImplicitPrelude  #-}
@@ -17,6 +17,7 @@ module Miner.Types
   , Command(..)
   , CPUEnv(..)
   , GPUEnv(..)
+  , OpenCLEnv(..)
   , OtherCommand(..)
     -- * miscellaneous
   , tlsSettings
@@ -25,7 +26,6 @@ module Miner.Types
 import           Chainweb.Utils (textOption)
 import           Data.Default (def)
 import           Data.Generics.Product.Fields (field)
-import qualified RIO.HashMap as HM
 import           Data.Time.Clock.POSIX (POSIXTime)
 import           Data.Tuple.Strict (T2(..))
 import           Network.Connection
@@ -33,6 +33,7 @@ import           Network.HTTP.Client hiding (Proxy(..), responseBody)
 import           Options.Applicative
 import           RIO
 import           RIO.Char (isHexDigit)
+import qualified RIO.HashMap as HM
 import qualified RIO.Set as S
 import qualified RIO.Text as T
 import           Servant.Client
@@ -65,11 +66,11 @@ data Env = Env
     , envLog         :: !LogFunc
     , envCmd         :: !Command
     , envArgs        :: !ClientArgs
-    , envHashes      :: IORef Word64
-    , envSecs        :: IORef Word64
-    , envLastSuccess :: IORef POSIXTime
+    , envHashes      :: !(IORef Word64)
+    , envSecs        :: !(IORef Word64)
+    , envLastSuccess :: !(IORef POSIXTime)
     , envUpdateMap   :: !UpdateMap
-    , envUrls        :: IORef (NonEmpty (T2 BaseUrl ChainwebVersion)) }
+    , envUrls        :: !(IORef (NonEmpty (T2 BaseUrl ChainwebVersion))) }
     deriving stock (Generic)
 
 instance HasLogFunc Env where
@@ -90,13 +91,21 @@ data ClientArgs = ClientArgs
 -- | The top-level git-style CLI "command" which determines which mining
 -- paradigm to follow.
 --
-data Command = CPU CPUEnv ClientArgs | GPU GPUEnv ClientArgs | Otherwise OtherCommand
+data Command = CPU CPUEnv ClientArgs | GPU GPUEnv ClientArgs | OpenCL OpenCLEnv ClientArgs | Otherwise OtherCommand
 
 newtype CPUEnv = CPUEnv { cores :: Word16 }
 
 data GPUEnv = GPUEnv
-    { envMinerPath :: Text
-    , envMinerArgs :: [Text]
+    { envMinerPath :: !Text
+    , envMinerArgs :: ![Text]
+    } deriving stock (Generic)
+
+data OpenCLEnv = OpenCLEnv
+    { platformIndex :: !Int
+    , deviceIndex   :: !Int
+    , globalSize    :: !Int
+    , localSize     :: !Int
+    , workSetSize   :: !Int
     } deriving stock (Generic)
 
 pClientArgs :: Parser ClientArgs
@@ -105,10 +114,34 @@ pClientArgs = ClientArgs <$> pLog <*> some pUrl <*> pMiner <*> pChainId
 pCommand :: Parser Command
 pCommand = hsubparser
     (  command "cpu" (info cpuOpts (progDesc "Perform multicore CPU mining"))
-    <> command "gpu" (info gpuOpts (progDesc "Perform GPU mining"))
+    <> command "opencl" (info openCLOpts (progDesc "Perform OpenCL mining"))
+    <> command "gpu" (info gpuOpts (progDesc "Perform GPU mining using an external miner"))
     <> command "keys" (info (Otherwise <$> keysOpts) (progDesc "Generate public/private key pair"))
     <> command "balance" (info (Otherwise <$> balancesOpts) (progDesc "Get balances on all chains"))
     )
+
+pOpenCLEnv :: Parser OpenCLEnv
+pOpenCLEnv = OpenCLEnv <$> pPlatformIndex <*> pDeviceIndex <*> pGlobalSize <*> pLocalSize <*> pWorkSetSize
+
+pDeviceIndex :: Parser Int
+pDeviceIndex = textOption
+    (long "device-index" <> help "Device index (default 0)" <> value 0)
+
+pPlatformIndex :: Parser Int
+pPlatformIndex = textOption
+    (long "platform-index" <> help "Platform index (default 0)" <> value 0)
+
+pGlobalSize :: Parser Int
+pGlobalSize = textOption
+    (long "global-size" <> help "OpenCL global work size (default 1024*1024*16)" <> value (1024*1024*16))
+
+pLocalSize :: Parser Int
+pLocalSize = textOption
+    (long "local-size" <> help "OpenCL local work size (default 256)" <> value 256)
+
+pWorkSetSize :: Parser Int
+pWorkSetSize = textOption
+    (long "workset-size" <> help "OpenCL workset size (default 64)" <> value 64)
 
 pMinerPath :: Parser Text
 pMinerPath = textOption
@@ -123,6 +156,9 @@ pMinerArgs = T.words <$> pMinerArgs0
 
 pGpuEnv :: Parser GPUEnv
 pGpuEnv = GPUEnv <$> pMinerPath <*> pMinerArgs
+
+openCLOpts :: Parser Command
+openCLOpts = liftA2 OpenCL pOpenCLEnv pClientArgs
 
 gpuOpts :: Parser Command
 gpuOpts = liftA2 GPU pGpuEnv pClientArgs

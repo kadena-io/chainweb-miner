@@ -5,6 +5,7 @@ ghc-options: {"$locals": -ddump-to-file -ddump-hi}
 extra-deps:
   # --- Missing from Stackage --- #
   - generic-lens-1.2.0.1
+  - OpenCL-1.0.3.4
   - paths-0.2.0.0
   - streaming-events-1.0.0
   - strict-tuple-0.1.3
