@@ -1,8 +1,8 @@
 {-# LANGUAGE BangPatterns        #-}
+{-# LANGUAGE MultiWayIf          #-}
 {-# LANGUAGE NoImplicitPrelude   #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections       #-}
 {-# LANGUAGE ViewPatterns        #-}
 
 module Miner.OpenCL
@@ -21,19 +21,18 @@ import           Foreign.C.Types
 import           Foreign.Marshal.Alloc
 import           Foreign.Ptr
 import           Foreign.Storable
-import           GHC.Show (intToDigit)
 import           RIO
 import qualified RIO.ByteString as BS
 import qualified RIO.ByteString.Lazy as BL
-import           RIO.Char (ord, toUpper)
+import           RIO.Char (ord)
 import           RIO.Char.Partial (chr)
 import qualified RIO.List as L
-import           RIO.List.Partial (head, (!!))
+import           RIO.List.Partial ((!!))
 import qualified RIO.Text as T
 import           RIO.Text.Partial (splitOn)
 import           System.Random
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
-import           Text.Printf (PrintfArg, printf)
+import           Text.Printf (printf)
 
 -- internal modules
 
@@ -43,52 +42,48 @@ import           Miner.Types (OpenCLEnv(..))
 ---
 
 data OpenCLPlatform = OpenCLPlatform
-  { platformId         :: !O.CLPlatformID
-  , platformName       :: !Text
-  , platformVersion    :: !Text
-  , platformVendor     :: !Text
-  , platformExtensions :: ![Text]
-  , platformDevices    :: ![OpenCLDevice]
-  } deriving Show
+    { platformId         :: !O.CLPlatformID
+    , platformName       :: !Text
+    , platformVersion    :: !Text
+    , platformVendor     :: !Text
+    , platformExtensions :: ![Text]
+    , platformDevices    :: ![OpenCLDevice] }
 
 data OpenCLDevice = OpenCLDevice
-  { deviceId               :: !O.CLDeviceID
-  , devicePlatformId       :: !O.CLPlatformID
-  , deviceName             :: !Text
-  , deviceVendor           :: !Text
-  , deviceVersion          :: !Text
-  , deviceTypes            :: ![O.CLDeviceType]
-  , deviceAvailable        :: !Bool
-  , deviceExtensions       :: ![Text]
-  , deviceAddressBits      :: !O.CLuint
-  , deviceGlobalMemSize    :: !O.CLulong
-  , deviceGlobalCacheSize  :: !O.CLulong
-  , deviceCacheLineSize    :: !O.CLuint
-  , deviceLocalMemSize     :: !O.CLulong
-  , deviceMaxClock         :: !O.CLuint
-  , deviceComputeUnits     :: !O.CLuint
-  , deviceMaxWorkGroupSize :: !CSize
-  , deviceMaxWorkItemSizes :: ![CSize]
-  } deriving Show
+    { deviceId               :: !O.CLDeviceID
+    , devicePlatformId       :: !O.CLPlatformID
+    , deviceName             :: !Text
+    , deviceVendor           :: !Text
+    , deviceVersion          :: !Text
+    , deviceTypes            :: ![O.CLDeviceType]
+    , deviceAvailable        :: !Bool
+    , deviceExtensions       :: ![Text]
+    , deviceAddressBits      :: !O.CLuint
+    , deviceGlobalMemSize    :: !O.CLulong
+    , deviceGlobalCacheSize  :: !O.CLulong
+    , deviceCacheLineSize    :: !O.CLuint
+    , deviceLocalMemSize     :: !O.CLulong
+    , deviceMaxClock         :: !O.CLuint
+    , deviceComputeUnits     :: !O.CLuint
+    , deviceMaxWorkGroupSize :: !CSize
+    , deviceMaxWorkItemSizes :: ![CSize] } deriving (Show)
 
 data OpenCLWork = OpenCLWork
-  { workContext   :: !O.CLContext
-  , workQueues    :: ![OpenCLWorkQueue]
-  , workSource    :: !Text
-  , workProgram   :: !O.CLProgram
-  , workKernel    :: !O.CLKernel
-  , workResultBuf :: !O.CLMem
-  } deriving Show
+    { workContext   :: !O.CLContext
+    , workQueues    :: ![OpenCLWorkQueue]
+    , _workSource   :: !Text
+    , workProgram   :: !O.CLProgram
+    , workKernel    :: !O.CLKernel
+    , workResultBuf :: !O.CLMem }
 
 data OpenCLWorkQueue = OpenCLWorkQueue
-  { workDevice :: !OpenCLDevice
-  , workQueue  :: !O.CLCommandQueue
-  } deriving Show
+    { _workDevice :: !OpenCLDevice
+    , workQueue   :: !O.CLCommandQueue }
 
 instance PP.Pretty OpenCLPlatform where
-  prettyList = pList "Platform"
-  pretty (OpenCLPlatform _ _ version _ _ devices) =
-    text version <> PP.hardline <> PP.prettyList devices <> PP.hardline
+    prettyList = pList "Platform"
+    pretty (OpenCLPlatform _ _ version _ _ devices) =
+        text version <> PP.hardline <> PP.prettyList devices <> PP.hardline
 
 instance PP.Pretty OpenCLDevice where
   prettyList = pList "Device"
@@ -193,7 +188,7 @@ buildOpenCLProgram :: O.CLProgram -> [OpenCLDevice] -> [Text] -> IO O.CLProgram
 buildOpenCLProgram prog devices args = do
   res <- try (O.clBuildProgram prog (deviceId <$> devices) (joinArgs args))
   case res of
-    Left (err :: SomeException) -> do
+    Left (err :: SomeException) ->
         -- TODO: logger
         -- putStrLn =<< clGetProgramBuildLog prog (deviceId $ head $ devices)
         throwM err
@@ -218,7 +213,7 @@ prepareOpenCLWork source devs args kernelName = do
   builtProgram <- buildOpenCLProgram program devs args
   kernel <- createOpenCLKernel builtProgram kernelName
   queues <- traverse (createOpenCLWorkQueue context []) devs
-  resultBuf <- O.clCreateBuffer context [O.CL_MEM_WRITE_ONLY] ((8::Int),nullPtr)
+  resultBuf <- O.clCreateBuffer context [O.CL_MEM_WRITE_ONLY] (8 :: Int, nullPtr)
   O.clSetKernelArgSto kernel 1 resultBuf
   pure $ OpenCLWork context queues source builtProgram kernel resultBuf
 
@@ -248,10 +243,6 @@ bsToWord64s = word64s . BS.unpack
     where
     unstep b a = a `shiftL` 8 .|. fromIntegral b
 
--- | Show /non-negative/ 'Integral' numbers in base 16.
-showHex :: (PrintfArg a, Integral a, Show a) => a -> String
-showHex n = printf "%h" n
-
 targetBytesToOptions :: Int -> TargetBytes -> HeaderBytes -> [Text]
 targetBytesToOptions wss (TargetBytes (bsToWord64s -> targetHash)) (HeaderBytes (bsToWord32s -> blockData)) =
   "-Werror" : ("-DWORKSET_SIZE=" <> T.pack (show wss)) : blockDataOptions ++ targetHashOptions
@@ -263,7 +254,7 @@ targetBytesToOptions wss (TargetBytes (bsToWord64s -> targetHash)) (HeaderBytes 
                 if i < 71 then blockData !! i
                 else 0
         in [
-            "-DB" <> T.pack (show (i`div`16)) <> T.pack (showHex (i `mod` 16)) <> "=" <> T.pack (show value) <> "U"
+            "-DB" <> T.pack (show (i`div`16)) <> T.pack (printf "%h" (i `mod` 16)) <> "=" <> T.pack (show value) <> "U"
            ]
   targetHashOptions = [0..4-1] >>= \i ->
     let j = chr $ ord 'A' + (3 - i)
@@ -277,7 +268,7 @@ run cfg target header src device genNonce = do
     work <- prepareOpenCLWork src [device] args kernelName
     offsetP <- calloc :: IO (Ptr CSize)
     resP <- calloc :: IO (Ptr Word64)
-    !(T2 end steps) <- doIt offsetP resP work (1::Int)
+    T2 end steps <- doIt offsetP resP work (1::Int)
     endTime <- getCurrentTime
     let numNonces = globalSize cfg * 64 * steps
     let !result = MiningResult
@@ -294,7 +285,7 @@ run cfg target header src device genNonce = do
     free resP
     pure result
   where
-    doIt offsetP resP !work@(OpenCLWork _ [queue] _ _ kernel resultBuf) !n = do
+    doIt offsetP resP work@(OpenCLWork _ [queue] _ _ kernel resultBuf) !n = do
         nonce <- genNonce
         O.clSetKernelArgSto kernel 0 nonce
         e1 <- O.clEnqueueWriteBuffer (workQueue queue) resultBuf True (0::Int) 8 (castPtr resP) []
@@ -304,10 +295,8 @@ run cfg target header src device genNonce = do
         -- required to avoid leaking everything else
         traverse_ O.clReleaseEvent [e1,e2,e3]
         !res <- peek resP
-        if res == 0 then do
-          doIt offsetP resP work (n+1)
-        else do
-          return $ T2 res n
+        if | res == 0 -> doIt offsetP resP work (n+1)
+           | otherwise -> return $ T2 res n
     doIt _ _ _ _ = error "using multiple devices at once is currently unsupported"
 
 openCLMiner :: OpenCLEnv -> OpenCLDevice -> TargetBytes -> HeaderBytes -> IO MiningResult

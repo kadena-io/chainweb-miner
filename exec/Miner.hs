@@ -359,7 +359,7 @@ gpu ge@(GPUEnv mpath margs) t@(TargetBytes target) h@(HeaderBytes blockbytes) = 
 
 opencl :: OpenCLEnv -> TargetBytes -> HeaderBytes -> RIO Env HeaderBytes
 opencl oce t h@(HeaderBytes blockbytes) = do
-    platforms <- liftIO $ queryAllOpenCLDevices
+    platforms <- liftIO queryAllOpenCLDevices
     when (platformIndex oce >= length platforms) $ do
         logError . display . T.pack $
             "Selected platform index " <> show (platformIndex oce)
@@ -403,11 +403,11 @@ opencl oce t h@(HeaderBytes blockbytes) = do
 -- -------------------------------------------------------------------------- --
 -- Utils
 
-chain :: MonadThrow m => MonadIO m => ChainBytes -> m ChainId
+chain :: MonadThrow m => ChainBytes -> m ChainId
 chain (ChainBytes cbs) = runGet decodeChainId cbs
 
-chainInt :: MonadThrow m => MonadIO m => ChainBytes -> m Int
+chainInt :: MonadThrow m => ChainBytes -> m Int
 chainInt c = chainIdInt <$> chain c
 
-height :: MonadThrow m => MonadIO m => HeaderBytes -> m Word64
+height :: MonadThrow m => HeaderBytes -> m Word64
 height (HeaderBytes hbs) = _height <$> runGet decodeBlockHeight (B.take 8 $ B.drop 258 hbs)

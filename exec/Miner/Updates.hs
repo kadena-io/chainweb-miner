@@ -1,9 +1,9 @@
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase         #-}
-{-# LANGUAGE NoImplicitPrelude  #-}
-{-# LANGUAGE NumericUnderscores #-}
-{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE NoImplicitPrelude          #-}
+{-# LANGUAGE NumericUnderscores         #-}
+{-# LANGUAGE OverloadedStrings          #-}
 
 module Miner.Updates
   ( newUpdateMap
@@ -14,8 +14,8 @@ module Miner.Updates
 
 import           Data.Tuple.Strict (T2(..))
 
-import qualified Network.HTTP.Client as HTTP
 import           Network.HTTP.Client hiding (Proxy(..), responseBody)
+import qualified Network.HTTP.Client as HTTP
 import           Network.Wai.EventSource (ServerEvent(..))
 import           Network.Wai.EventSource.Streaming (withEvents)
 
@@ -131,12 +131,12 @@ withPreemption k inner = race awaitChange inner
         awaitTrigger trigger >>= \case
             StreamClosed -> awaitChange
             StreamFailed e -> throwM $ UpdateFailure $ "update stream failed: " <> errMsg e
-            Timeout -> throwM $ UpdateFailure $ "timeout of update stream"
+            Timeout -> throwM $ UpdateFailure "timeout of update stream"
             Update -> return ()
 
     errMsg e = case fromException e of
         Just (HTTP.HttpExceptionRequest _ ex) -> T.pack $ show ex
-        _ -> T.pack $ show e
+        _                                     -> T.pack $ show e
 
 -- | Atomatically restarts the stream when the response status is 2** and throws
 -- and exception otherwise.
