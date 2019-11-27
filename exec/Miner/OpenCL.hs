@@ -254,7 +254,7 @@ targetBytesToOptions wss (TargetBytes (bsToWord64s -> targetHash)) (HeaderBytes 
                 if i < 71 then blockData !! i
                 else 0
         in [
-            "-DB" <> T.pack (show (i`div`16)) <> T.pack (printf "%h" (i `mod` 16)) <> "=" <> T.pack (show value) <> "U"
+            "-DB" <> T.pack (show (i`div`16)) <> T.pack (printf "%x" (i `mod` 16)) <> "=" <> T.pack (show value) <> "U"
            ]
   targetHashOptions = [0..4-1] >>= \i ->
     let j = chr $ ord 'A' + (3 - i)
