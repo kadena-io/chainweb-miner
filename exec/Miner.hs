@@ -341,24 +341,12 @@ gpu ge@(GPUEnv mpath margs) t@(TargetBytes target) h@(HeaderBytes blockbytes) = 
       Left err -> do
           logError . display . T.pack $ "Error running GPU miner: " <> err
           throwString err
-      Right (MiningResult nonceBytes numNonces hps _) -> do
-          let newBytes = nonceBytes <> B.drop 8 blockbytes
-              secs = numNonces `div` max 1 hps
-
-          -- FIXME Consider removing this check if during later benchmarking it
-          -- proves to be an issue.
-          bh <- runGet decodeBlockHeaderWithoutHash newBytes
-
-          if | not (prop_block_pow bh) -> do
-                 logError "Bad nonce returned from GPU!"
-                 gpu ge t h
-             | otherwise -> do
-                 modifyIORef' (envHashes e) (+ numNonces)
-                 modifyIORef' (envSecs e) (+ secs)
-                 pure $! HeaderBytes newBytes
+      Right mmr -> liftIO (verify e h mmr) >>= \case
+          Just mr -> pure mr
+          Nothing -> logError "Bad nonce returned from GPU miner!" >> gpu ge t h
 
 opencl :: OpenCLEnv -> TargetBytes -> HeaderBytes -> RIO Env HeaderBytes
-opencl oce t h@(HeaderBytes blockbytes) = do
+opencl oce t h = do
     platforms <- liftIO queryAllOpenCLDevices
     when (platformIndex oce >= length platforms) $ do
         logError . display . T.pack $
@@ -383,25 +371,27 @@ opencl oce t h@(HeaderBytes blockbytes) = do
             Left (err :: SomeException) -> do
                 logError . display . T.pack $ "Error running OpenCL miner: " <> show err
                 throwM err
-            Right (MiningResult nonceBytes numNonces hps _) -> do
-                let newBytes = nonceBytes <> B.drop 8 blockbytes
-                    secs = numNonces `div` max 1 hps
-
-                -- FIXME Consider removing this check if during later benchmarking it
-                -- proves to be an issue.
-                bh <- runGet decodeBlockHeaderWithoutHash newBytes
-
-                if | not (prop_block_pow bh) -> do
-                        logError "Bad nonce returned from OpenCL miner!"
-                        loop device
-                    | otherwise -> do
-                        modifyIORef' (envHashes e) (+ numNonces)
-                        modifyIORef' (envSecs e) (+ secs)
-                        pure $! HeaderBytes newBytes
-
+            Right mmr -> liftIO (verify e h mmr) >>= \case
+                Just mr -> pure mr
+                Nothing -> logError "Bad nonce returned from OpenCL miner!" >> loop device
 
 -- -------------------------------------------------------------------------- --
 -- Utils
+
+verify :: Env -> HeaderBytes -> MiningResult -> IO (Maybe HeaderBytes)
+verify e (HeaderBytes blockbytes) (MiningResult nonceBytes numNonces hps _) = do
+    let newBytes = nonceBytes <> B.drop 8 blockbytes
+        secs = numNonces `div` max 1 hps
+
+    -- FIXME Consider removing this check if during later benchmarking it
+    -- proves to be an issue.
+    bh <- runGet decodeBlockHeaderWithoutHash newBytes
+
+    if | not (prop_block_pow bh) -> pure Nothing
+       | otherwise -> do
+           modifyIORef' (envHashes e) (+ numNonces)
+           modifyIORef' (envSecs e) (+ secs)
+           pure . Just $! HeaderBytes newBytes
 
 chain :: MonadThrow m => ChainBytes -> m ChainId
 chain (ChainBytes cbs) = runGet decodeChainId cbs

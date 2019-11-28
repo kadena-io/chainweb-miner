@@ -123,7 +123,7 @@ getTrigger (UpdateMap v) k = modifyMVar v $ \m -> case HM.lookup k m of
 -- time (which will affect about 0.7% of all blocks).
 --
 withPreemption :: UpdateKey -> RIO Env a -> RIO Env (Either () a)
-withPreemption k inner = race awaitChange inner
+withPreemption k = race awaitChange
   where
     awaitChange = do
         m <- asks envUpdateMap
