@@ -1,5 +1,5 @@
 {-# LANGUAGE DataKinds          #-}
-{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE NoImplicitPrelude  #-}
@@ -23,9 +23,7 @@ module Miner.Types
   ) where
 
 import           Chainweb.Utils (textOption)
-import           Data.Default (def)
 import           Data.Generics.Product.Fields (field)
-import qualified RIO.HashMap as HM
 import           Data.Time.Clock.POSIX (POSIXTime)
 import           Data.Tuple.Strict (T2(..))
 import           Network.Connection
@@ -33,6 +31,7 @@ import           Network.HTTP.Client hiding (Proxy(..), responseBody)
 import           Options.Applicative
 import           RIO
 import           RIO.Char (isHexDigit)
+import qualified RIO.HashMap as HM
 import qualified RIO.Set as S
 import qualified RIO.Text as T
 import           Servant.Client
@@ -43,6 +42,7 @@ import qualified System.Random.MWC as MWC
 import           Chainweb.HostAddress (HostAddress, hostAddressToBaseUrl)
 import           Chainweb.Miner.Pact (Miner(..), MinerKeys(..))
 import           Chainweb.Version (ChainId, ChainwebVersion)
+import qualified Pact.Types.Info as P
 import qualified Pact.Types.Term as P
 
 --------------------------------------------------------------------------------
@@ -179,7 +179,7 @@ pKey = option k (long "miner-key"
         Right $ fromString s
 
 pPred :: Parser P.Name
-pPred = (\s -> P.Name $ P.BareName s def) <$>
+pPred = (\s -> P.Name . P.BareName s $ P.Info Nothing) <$>
     strOption (long "miner-pred" <> value "keys-all" <> help "Keyset predicate")
 
 data OtherCommand =
@@ -191,8 +191,9 @@ keysOpts = pure Keys
 balancesOpts :: Parser OtherCommand
 balancesOpts = Balance <$> pUrl <*> pMinerName
   where
+    pMinerName :: Parser Text
     pMinerName =
-      textOption (long "miner-account" <> help "Coin Contract account name of Miner")
+        textOption (long "miner-account" <> help "Account name to check the balance of")
 
 -- | This allows this code to accept the self-signed certificates from
 -- `chainweb-node`.

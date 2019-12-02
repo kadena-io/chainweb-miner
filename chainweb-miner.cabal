@@ -43,7 +43,6 @@ executable chainweb-miner
     , aeson >= 1.4.3
     , chainweb >= 1.0
     , connection >= 0.2
-    , data-default >=0.7
     , dlist >= 0.8
     , semigroupoids >= 5
     , generic-lens >= 1.2
