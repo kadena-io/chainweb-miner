@@ -1,10 +1,17 @@
 # `chainweb-miner` Changelog
 
-## 1.0.3 (2019-11-??)
+## 1.0.3 (2019-12-01)
 
 #### New Features
 
-- `testnet03` support.
+- Improved `chainweb-node` connection behaviour.
+  ([#13](https://github.com/kadena-io/chainweb-miner/pull/13))
+- `testnet04` support.
+
+#### Bug Fixes
+
+- Fixed `chainweb-miner balance` to account for changes in Chainweb.
+  ([#19](https://github.com/kadena-io/chainweb-miner/pull/19))
 
 ## 1.0.2 (2019-11-21)
 
