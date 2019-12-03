@@ -3,7 +3,7 @@ packages: .
 source-repository-package
     type: git
     location: https://github.com/kadena-io/chainweb-node.git
-    tag: face77b7cf9447e063413333e4ed691993c58414
+    tag: 7ed03f0d5d6bc782b020d61cc4b0c5065b23f261
 
 source-repository-package
     type: git
