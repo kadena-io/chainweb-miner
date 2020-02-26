@@ -54,7 +54,7 @@ getBalances url mi = do
     tx = printf "(coin.get-balance \"%s\")" mi
     printer (a, b) = printf $ T.unpack (toBalanceMsg a b) <> ".\n"
     errPrinter (a,b) = printf $ T.unpack (toErrMsg a b) <> ".\n"
-    cenv m = ClientEnv m url Nothing
+    cenv m = mkClientEnv m url
     mConc as f = runConcurrently $ foldMap1 (Concurrently . f) as
 
     printBalance :: Decimal -> (Text, Decimal) -> IO Decimal
