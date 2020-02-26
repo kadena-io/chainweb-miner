@@ -3,12 +3,12 @@ packages: .
 source-repository-package
     type: git
     location: https://github.com/kadena-io/chainweb-node.git
-    tag: face77b7cf9447e063413333e4ed691993c58414
+    tag: c9d8c1112ef0093bca04f6124721d8fa41ebf5a9
 
 source-repository-package
     type: git
     location: https://github.com/kadena-io/pact.git
-    tag: 3763fecf23122cdd2352377564f3c47dc497ee17
+    tag: ace18a2489bf86595af09316bd1c09794c326b77
 
 source-repository-package
     type: git
@@ -21,4 +21,6 @@ source-repository-package
     tag: 17a5fb130926582eff081eeb1b94cb6c7097c67a
 
 constraints:
-      base-unicode-symbols < 0.2.4
+      base-unicode-symbols < 0.2.4,
+      megaparsec < 8,
+      neat-interpolation < 0.4

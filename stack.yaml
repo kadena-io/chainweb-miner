@@ -1,4 +1,4 @@
-resolver: lts-14.15
+resolver: lts-14.27
 
 ghc-options: {"$locals": -ddump-to-file -ddump-hi}
 
@@ -6,7 +6,7 @@ extra-deps:
   # --- Missing from Stackage --- #
   - generic-lens-1.2.0.1
   - paths-0.2.0.0
-  - streaming-events-1.0.0
+  - streaming-events-1.0.1
   - strict-tuple-0.1.3
 
   # --- Transitive Chainweb Dependencies --- #
@@ -16,9 +16,14 @@ extra-deps:
   - fake-0.1.1.2
   - loglevel-0.1.0.0
   - merkle-log-0.1.0.0
-  - tls-1.5.2
+  - tls-1.5.4
   - random-strings-0.1.1.0
   - yet-another-logger-0.3.1
+  - lens-aeson-1.1
+  - streaming-concurrency-0.3.1.3
+  - warp-3.3.9
+  - warp-tls-3.2.11
+  - streaming-with-0.2.2.1
 
   # --- Transitive Pact Dependencies --- #
   - ed25519-donna-0.1.1
@@ -29,8 +34,8 @@ extra-deps:
 
   # --- Custom Pins --- #
   - github: kadena-io/chainweb-node
-    commit: face77b7cf9447e063413333e4ed691993c58414
+    commit: c9d8c1112ef0093bca04f6124721d8fa41ebf5a9
   - github: kadena-io/chainweb-storage
     commit: 17a5fb130926582eff081eeb1b94cb6c7097c67a
   - github: kadena-io/pact
-    commit: 3763fecf23122cdd2352377564f3c47dc497ee17
+    commit: ace18a2489bf86595af09316bd1c09794c326b77

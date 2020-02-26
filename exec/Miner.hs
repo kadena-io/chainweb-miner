@@ -1,16 +1,16 @@
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE DataKinds           #-}
-{-# LANGUAGE DerivingStrategies  #-}
+{-# LANGUAGE BangPatterns               #-}
+{-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE MultiWayIf          #-}
-{-# LANGUAGE NoImplicitPrelude   #-}
-{-# LANGUAGE NumericUnderscores  #-}
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE RankNTypes          #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
-{-# LANGUAGE TypeOperators       #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE MultiWayIf                 #-}
+{-# LANGUAGE NoImplicitPrelude          #-}
+{-# LANGUAGE NumericUnderscores         #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE TypeOperators              #-}
 
 -- |
 -- Module: Main
@@ -86,6 +86,7 @@ import           Text.Printf (printf)
 
 import           Chainweb.BlockHeader
 import           Chainweb.BlockHeader.Validation (prop_block_pow)
+import           Chainweb.BlockHeight
 import           Chainweb.Miner.Core
 import           Chainweb.Miner.RestAPI.Client (solvedClient, workClient)
 import           Chainweb.RestAPI.NodeInfo (NodeInfo(..), NodeInfoApi)
@@ -136,7 +137,7 @@ work cmd cargs = do
 getInfo :: Manager -> BaseUrl -> IO (Either ClientError ChainwebVersion)
 getInfo m url = fmap nodeVersion <$> runClientM (client (Proxy @NodeInfoApi)) cenv
   where
-    cenv = ClientEnv m url Nothing
+    cenv = mkClientEnv m url
 
 run :: RIO Env ()
 run = do
@@ -192,7 +193,7 @@ getWork = do
     f :: Env -> IO (Either ClientError WorkBytes)
     f e = do
         T2 u v <- NEL.head <$> readIORef (envUrls e)
-        runClientM (workClient v (chainid a) $ miner a) (ClientEnv m u Nothing)
+        runClientM (workClient v (chainid a) $ miner a) (mkClientEnv m u)
       where
         a = envArgs e
         m = envMgr e
@@ -302,7 +303,7 @@ miningLoop inner = mask go
             logInfo . display . T.pack $
                 printf "Chain %d: Mined block at Height %d. (%.2f MH/s - %ds since last)" cid hgh r d
             T2 url v <- NEL.head <$> readIORef (envUrls e)
-            res <- liftIO . runClientM (solvedClient v h) $ ClientEnv m url Nothing
+            res <- liftIO . runClientM (solvedClient v h) $ mkClientEnv m url
             when (isLeft res) $ logWarn "Failed to submit new BlockHeader!"
           where
             T3 cbytes _ hbytes = unWorkBytes w
