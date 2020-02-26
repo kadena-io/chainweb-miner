@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ['8.6.5', '8.8.1']
+        ghc: ['8.6.5', '8.8.2']
         cabal: ['3.0']
         os: ['ubuntu-16.04', 'ubuntu-18.04', 'macOS-10.14']
         cabalcache: ['true']
@@ -74,8 +74,8 @@ jobs:
           documentation: false
           ghc-options: -j
         EOF
-    - name: Append cabal.project (only ghc-8.8.1)
-      if: matrix.ghc == '8.8.1'
+    - name: Append cabal.project (only ghc-8.8)
+      if: contains(matrix.ghc, '8.8')
       run: |
         cat >> cabal.project <<EOF
         package chainweb
