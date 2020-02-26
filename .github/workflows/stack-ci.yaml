@@ -24,5 +24,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-
 
+      - name: Install Ubuntu Deps
+        run: "sudo apt install -y librocksdb-dev"
+
       - name: Build and run tests
         run: "stack test --fast --no-terminal"
