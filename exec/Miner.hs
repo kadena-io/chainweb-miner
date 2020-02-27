@@ -340,20 +340,22 @@ gpu ge@(GPUEnv mpath margs) t@(TargetBytes target) h@(HeaderBytes blockbytes) = 
           logError . display . T.pack $ "Error running GPU miner: " <> err
           throwString err
       Right (MiningResult nonceBytes numNonces hps _) -> do
-          let newBytes = nonceBytes <> B.drop 8 blockbytes
-              secs = numNonces `div` max 1 hps
-
-          -- FIXME Consider removing this check if during later benchmarking it
-          -- proves to be an issue.
+          let secs = numNonces `div` max 1 hps
+          let r = checkNonce (nonceBytes <> B.drop 8 blockbytes)
+                <|> checkNonce (B.take (B.length blockbytes - 8) blockbytes <> nonceBytes)
+          case r of
+            Nothing -> do
+              logError "Bad nonce returned from GPU!"
+              gpu ge t h
+            Just newBytes -> do
+              modifyIORef' (envHashes e) (+ numNonces)
+              modifyIORef' (envSecs e) (+ secs)
+              pure $! HeaderBytes newBytes
+  where
+    checkNonce newBytes = do
           bh <- runGet decodeBlockHeaderWithoutHash newBytes
-
-          if | not (prop_block_pow bh) -> do
-                 logError "Bad nonce returned from GPU!"
-                 gpu ge t h
-             | otherwise -> do
-                 modifyIORef' (envHashes e) (+ numNonces)
-                 modifyIORef' (envSecs e) (+ secs)
-                 pure $! HeaderBytes newBytes
+          guard (prop_block_pow bh)
+          return newBytes
 
 -- -------------------------------------------------------------------------- --
 -- Utils
