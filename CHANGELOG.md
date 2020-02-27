@@ -1,5 +1,10 @@
 # `chainweb-miner` Changelog
 
+## 1.1.0 (2020-02-27)
+
+- The last 8 bytes of a Block Header may also be interpreted as a Nonce. This allows
+  for a significant performance improvement for GPU miners.
+
 ## 1.0.3 (2019-12-01)
 
 #### New Features
