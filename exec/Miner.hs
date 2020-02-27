@@ -347,13 +347,14 @@ gpu ge@(GPUEnv mpath margs) t@(TargetBytes target) h@(HeaderBytes blockbytes) = 
           -- proves to be an issue.
           bh <- runGet decodeBlockHeaderWithoutHash newBytes
 
-          if | not (prop_block_pow bh) -> do
-                 logError "Bad nonce returned from GPU!"
-                 gpu ge t h
-             | otherwise -> do
-                 modifyIORef' (envHashes e) (+ numNonces)
-                 modifyIORef' (envSecs e) (+ secs)
-                 pure $! HeaderBytes newBytes
+          if not (prop_block_pow bh)
+            then do
+                logError "Bad nonce returned from GPU!"
+                gpu ge t h
+            else do
+                modifyIORef' (envHashes e) (+ numNonces)
+                modifyIORef' (envSecs e) (+ secs)
+                pure $! HeaderBytes newBytes
 
 -- -------------------------------------------------------------------------- --
 -- Utils
