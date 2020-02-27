@@ -17,6 +17,7 @@ module Miner.Types
   , Command(..)
   , CPUEnv(..)
   , GPUEnv(..)
+  , NoncePos(..)
   , OtherCommand(..)
     -- * miscellaneous
   , tlsSettings
@@ -94,9 +95,12 @@ data Command = CPU CPUEnv ClientArgs | GPU GPUEnv ClientArgs | Otherwise OtherCo
 
 newtype CPUEnv = CPUEnv { cores :: Word16 }
 
+data NoncePos = Front | End
+
 data GPUEnv = GPUEnv
-    { envMinerPath :: Text
-    , envMinerArgs :: [Text]
+    { gpuMinerPath  :: Text
+    , gpuMinerArgs  :: [Text]
+    , gpuNonceFront :: NoncePos
     } deriving stock (Generic)
 
 pClientArgs :: Parser ClientArgs
@@ -122,7 +126,10 @@ pMinerArgs = T.words <$> pMinerArgs0
         (long "miner-args" <> value "" <> help "Extra miner arguments")
 
 pGpuEnv :: Parser GPUEnv
-pGpuEnv = GPUEnv <$> pMinerPath <*> pMinerArgs
+pGpuEnv = GPUEnv
+  <$> pMinerPath
+  <*> pMinerArgs
+  <*> flag Front End (long "nonce-at-end" <> help "Nonce goes on the end?")
 
 gpuOpts :: Parser Command
 gpuOpts = liftA2 GPU pGpuEnv pClientArgs

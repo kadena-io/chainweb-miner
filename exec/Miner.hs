@@ -331,7 +331,7 @@ cpu cpue tbytes hbytes = do
              n -> ParN n
 
 gpu :: GPUEnv -> TargetBytes -> HeaderBytes -> RIO Env HeaderBytes
-gpu ge@(GPUEnv mpath margs) t@(TargetBytes target) h@(HeaderBytes blockbytes) = do
+gpu ge@(GPUEnv mpath margs mend) t@(TargetBytes target) h@(HeaderBytes blockbytes) = do
     minerPath <- liftIO . Path.makeAbsolute . Path.fromFilePath $ T.unpack mpath
     e <- ask
     res <- liftIO $ callExternalMiner minerPath (map T.unpack margs) False target blockbytes
@@ -340,7 +340,9 @@ gpu ge@(GPUEnv mpath margs) t@(TargetBytes target) h@(HeaderBytes blockbytes) = 
           logError . display . T.pack $ "Error running GPU miner: " <> err
           throwString err
       Right (MiningResult nonceBytes numNonces hps _) -> do
-          let newBytes = nonceBytes <> B.drop 8 blockbytes
+          let newBytes = case mend of
+                Front -> nonceBytes <> B.drop 8 blockbytes
+                End   -> B.take (B.length blockbytes - 8) blockbytes <> nonceBytes
               secs = numNonces `div` max 1 hps
 
           -- FIXME Consider removing this check if during later benchmarking it
