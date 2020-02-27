@@ -129,7 +129,7 @@ pGpuEnv :: Parser GPUEnv
 pGpuEnv = GPUEnv
   <$> pMinerPath
   <*> pMinerArgs
-  <*> flag Front End (long "nonce-at-end" <> help "Nonce goes on the end?")
+  <*> flag Front End (long "nonce-at-end" <> help "Attach nonce to the end of the block, not the front")
 
 gpuOpts :: Parser Command
 gpuOpts = liftA2 GPU pGpuEnv pClientArgs
