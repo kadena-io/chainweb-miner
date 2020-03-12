@@ -1,5 +1,11 @@
 # `chainweb-miner` Changelog
 
+## Unreleased
+
+#### Changes
+
+- Uses newest Chainweb, so that all CPU mining injects the nonce at the end.
+
 ## 1.1.0 (2020-02-27)
 
 - The last 8 bytes of a Block Header may also be interpreted as a Nonce. This allows
