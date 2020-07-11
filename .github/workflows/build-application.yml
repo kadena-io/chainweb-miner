@@ -62,7 +62,9 @@ jobs:
         package pact
           documentation: False
         EOF
-    - name: Append cabal.project (only ghc-8.8)
+    - name: Create cabal.project.local
+      run: touch cabal.project.local
+    - name: Append cabal.project.local (only ghc-8.8)
       if: contains(matrix.ghc, '8.10')
       run: |
         cat >> cabal.project.local <<EOF
@@ -134,6 +136,7 @@ jobs:
       uses: actions/upload-artifact@v2
       with:
         name: chainweb-miner.${{ matrix.ghc }}.${{ matrix.os }}
+        path: artifacts/applications
 
     # Publish to S3
     - name: Define S3 locations
@@ -142,7 +145,6 @@ jobs:
         echo "::set-env name=BINFILE::chainweb-miner.${{ matrix.ghc }}.${{ matrix.os }}.${{ env.GIT_SHA_SHORT }}.tar.gz"
         echo "::set-env name=BRANCH_BINFILE::chainweb-miner.${{ matrix.ghc }}.${{ matrix.os }}.${{ env.GIT_REF_SHORT }}.tar.gz"
         echo "::set-env name=TAG_BINFILE::chainweb-miner.${{ matrix.ghc }}.${{ matrix.os }}.${{ env.GIT_TAG }}.tar.gz"
-        path: artifacts/applications
 
     # Publish artifacts to S3
     - name: Publish to S3
