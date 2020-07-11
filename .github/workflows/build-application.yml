@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ['8.8.2', '8.10.1']
+        ghc: ['8.8.3', '8.10.1']
         cabal: ['3.2.0.0']
         os: ['ubuntu-18.04', 'macOS-10.14']
         cabalcache: ['true']
