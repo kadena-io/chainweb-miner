@@ -54,6 +54,10 @@ The easiest way to obtain a Key Pair is via the ~chainweb-miner keys~ command.
 Once generated, please be very careful to save the public and secret (private)
 keys because you don't want to lose them.
 
+The first time you mine a block with your key pair an account is created for you.
+You can use any account name that doesn't yet exist. It is recommended to use 
+/public/ key of your key pair as account name.
+
 ** Mining with chainweb-miner
 
 *** CPU Mining
