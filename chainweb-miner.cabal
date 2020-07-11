@@ -42,7 +42,7 @@ executable chainweb-miner
     , bytes >= 0.17
     , Decimal >= 0.4.2
     , aeson >= 1.4.3
-    , chainweb >= 1.0
+    , chainweb >= 1.19
     , connection >= 0.2
     , dlist >= 0.8
     , semigroupoids >= 5
