@@ -39,6 +39,7 @@ executable chainweb-miner
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       bytestring >= 0.10
+    , bytes >= 0.17
     , Decimal >= 0.4.2
     , aeson >= 1.4.3
     , chainweb >= 1.0
