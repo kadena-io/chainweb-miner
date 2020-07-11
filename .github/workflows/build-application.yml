@@ -118,7 +118,7 @@ jobs:
     - name: Prepare artifacts
       run: |
         mkdir -p artifacts/applications
-        export VER=$(grep '^version' chainweb.cabal | sed -e 's/.*: *//')
+        export VER=$(grep '^version' chainweb-miner.cabal | sed -e 's/.*: *//')
         cp $(find dist-newstyle/ -name 'chainweb-miner' -type f) artifacts/applications
         cp README.md artifacts/applications
         cp CHANGELOG.md artifacts/applications
