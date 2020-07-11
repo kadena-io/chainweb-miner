@@ -33,7 +33,7 @@ jobs:
         echo "::set-env name=GIT_HEAD_REF_SHORT::${GITHUB_HEAD_REF#refs/heads/}"
         echo "::set-env name=GIT_SHA_SHORT::$(git rev-parse --short HEAD || true)"
     - name: Install GHC and Cabal
-      uses: actions/setup-haskell@v1.1.0
+      uses: actions/setup-haskell@v1.1.2
       with:
          ghc-version: ${{ matrix.ghc }}
          cabal-version: ${{ matrix.cabal }}
@@ -61,8 +61,6 @@ jobs:
           documentation: False
         package pact
           documentation: False
-        allow-newer:
-          token-bucket:*
         EOF
     - name: Append cabal.project (only ghc-8.8)
       if: contains(matrix.ghc, '8.10')
