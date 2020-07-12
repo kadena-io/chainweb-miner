@@ -351,9 +351,7 @@ gpu ge@(GPUEnv mpath margs) t@(TargetBytes target) h@(HeaderBytes blockbytes) = 
           throwString err
       Right (MiningResult nonceBytes numNonces hps _) -> do
           let secs = numNonces `div` max 1 hps
-          let r = checkNonce (nonceBytes <> B.drop 8 blockbytes)
-                <|> checkNonce (B.take (B.length blockbytes - 8) blockbytes <> nonceBytes)
-          case r of
+          case checkNonce (B.take (B.length blockbytes - 8) blockbytes <> nonceBytes) of
             Nothing -> do
               logError "Bad nonce returned from GPU!"
               gpu ge t h
