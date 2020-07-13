@@ -8,7 +8,7 @@ debug-info: True
 source-repository-package
     type: git
     location: https://github.com/kadena-io/chainweb-node.git
-    tag: 3c5f2264520a3edccf4731436b3a0545098d85a9
+    tag: be3d78afb18934e5268d2f95ab9a69226750f0f3
 
 source-repository-package
     type: git
