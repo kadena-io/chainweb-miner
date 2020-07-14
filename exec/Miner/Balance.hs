@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns      #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications  #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Miner.Balance ( getBalances ) where
 
@@ -51,7 +52,7 @@ getBalances url mi = do
         total <- foldM printBalance 0 balances
         printf $ "Total   => ₭" <> sshow (roundTo 12 total) <> "\n"
   where
-    tx = printf "(coin.get-balance \"%s\")" mi
+    tx = T.pack $ printf "(coin.get-balance \"%s\")" mi
     printer (a, b) = printf $ T.unpack (toBalanceMsg a b) <> ".\n"
     errPrinter (a,b) = printf $ T.unpack (toErrMsg a b) <> ".\n"
     cenv m = mkClientEnv m url
@@ -72,7 +73,7 @@ getBalances url mi = do
     go :: ClientEnv -> IO (These (D.DList (Text, LocalCmdError)) (D.DList (Text, Decimal)))
     go env = do
         res <- runClientM (client (RIO.Proxy @NodeInfoApi)) env
-        NodeInfo v _ cs _ <- either (throwString . show) pure res
+        NodeInfo v _ cs _ _ <- either (throwString . show) pure res
         mConc (NEL.fromList $ L.sort cs) $ \cidtext -> do
             c <- chainIdFromText cidtext
             t <- txTime

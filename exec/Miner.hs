@@ -64,6 +64,9 @@ module Main ( main ) where
 
 import           Control.Retry
 import           Control.Scheduler hiding (traverse_)
+import           Data.Bytes.Get
+import           Data.Bytes.Put
+import qualified Data.ByteString.Short as BS
 import           Data.Time.Clock.POSIX (getPOSIXTime)
 import           Data.Tuple.Strict (T2(..), T3(..))
 import           Network.HTTP.Client hiding (Proxy(..), responseBody)
@@ -87,6 +90,8 @@ import           Text.Printf (printf)
 import           Chainweb.BlockHeader
 import           Chainweb.BlockHeader.Validation (prop_block_pow)
 import           Chainweb.BlockHeight
+import           Chainweb.Cut.Create
+import           Chainweb.Difficulty
 import           Chainweb.Miner.Core
 import           Chainweb.Miner.RestAPI.Client (solvedClient, workClient)
 import           Chainweb.RestAPI.NodeInfo (NodeInfo(..), NodeInfoApi)
@@ -200,10 +205,9 @@ getWork = do
 
 workKey :: WorkBytes -> RIO Env UpdateKey
 workKey wb = do
+    T3 cbytes _ _ <- runGet unWorkBytes $ _workBytes wb
     cid <- liftIO $ chain cbytes
     return $! UpdateKey { _updateKeyChainId = cid }
-  where
-    T3 cbytes _ _ = unWorkBytes wb
 
 -- -------------------------------------------------------------------------- --
 -- Mining
@@ -277,7 +281,7 @@ miningLoop inner = mask go
     loopBody :: RIO Env ()
     loopBody = do
         T2 w key <- getWork
-        let T3 cbytes tbytes hbytes = unWorkBytes w
+        T3 cbytes tbytes hbytes <- runGet unWorkBytes $ _workBytes w
         cid <- liftIO $ chainInt cbytes
         logDebug . display . T.pack $ printf "Chain %d: Start mining on new work item." cid
         withPreemption key (inner tbytes hbytes) >>= \case
@@ -298,6 +302,7 @@ miningLoop inner = mask go
             let !m = envMgr e
                 !r = (fromIntegral hashes :: Double) / max 1 (fromIntegral secs) / 1000000
                 !d = ceiling (now - before) :: Int
+            T3 cbytes _ hbytes <- runGet unWorkBytes $ _workBytes w
             cid <- liftIO $ chainInt cbytes
             hgh <- liftIO $ height hbytes
             logInfo . display . T.pack $
@@ -306,20 +311,20 @@ miningLoop inner = mask go
             res <- liftIO . runClientM (solvedClient v h) $ mkClientEnv m url
             when (isLeft res) $ logWarn "Failed to submit new BlockHeader!"
           where
-            T3 cbytes _ hbytes = unWorkBytes w
 
 cpu :: CPUEnv -> TargetBytes -> HeaderBytes -> RIO Env HeaderBytes
 cpu cpue tbytes hbytes = do
     !start <- liftIO getPOSIXTime
     e <- ask
+    wh <- getWorkHeader
     T2 _ v <- NEL.head <$> readIORef (envUrls e)
     T2 new ns <- liftIO . fmap head . withScheduler comp $ \sch ->
         replicateWork (fromIntegral $ cores cpue) sch $ do
             -- TODO Be more clever about the Nonce that's picked to ensure that
             -- there won't be any overlap?
             n <- Nonce <$> MWC.uniform (envGen e)
-            new <- usePowHash v (\p -> mine p n tbytes) hbytes
-            terminateWith sch new
+            new <- usePowHash v $ \(_ :: Proxy a) -> mine @a n wh
+            terminateWith sch $ getSolved new
     !end <- liftIO getPOSIXTime
     modifyIORef' (envHashes e) $ \hashes -> ns * fromIntegral (cores cpue) + hashes
     modifyIORef' (envSecs e) (\secs -> secs + ceiling (end - start))
@@ -329,6 +334,11 @@ cpu cpue tbytes hbytes = do
     comp = case cores cpue of
              1 -> Seq
              n -> ParN n
+
+    getWorkHeader = runGet unsafeDecodeWorkHeader
+        $ "\0\0" <> (_targetBytes tbytes) <> (_headerBytes hbytes)
+
+    getSolved (T2 a b) = T2 (HeaderBytes $ runPutS $ encodeSolvedWork a) b
 
 gpu :: GPUEnv -> TargetBytes -> HeaderBytes -> RIO Env HeaderBytes
 gpu ge@(GPUEnv mpath margs) t@(TargetBytes target) h@(HeaderBytes blockbytes) = do
@@ -341,9 +351,7 @@ gpu ge@(GPUEnv mpath margs) t@(TargetBytes target) h@(HeaderBytes blockbytes) = 
           throwString err
       Right (MiningResult nonceBytes numNonces hps _) -> do
           let secs = numNonces `div` max 1 hps
-          let r = checkNonce (nonceBytes <> B.drop 8 blockbytes)
-                <|> checkNonce (B.take (B.length blockbytes - 8) blockbytes <> nonceBytes)
-          case r of
+          case checkNonce (B.take (B.length blockbytes - 8) blockbytes <> nonceBytes) of
             Nothing -> do
               logError "Bad nonce returned from GPU!"
               gpu ge t h
@@ -353,12 +361,28 @@ gpu ge@(GPUEnv mpath margs) t@(TargetBytes target) h@(HeaderBytes blockbytes) = 
               pure $! HeaderBytes newBytes
   where
     checkNonce newBytes = do
-          bh <- runGet decodeBlockHeaderWithoutHash newBytes
-          guard (prop_block_pow bh)
-          return newBytes
+        bh <- runGet decodeBlockHeaderWithoutHash newBytes
+        guard (prop_block_pow bh)
+        return newBytes
 
 -- -------------------------------------------------------------------------- --
 -- Utils
+
+unWorkBytes :: MonadGet m => m (T3 ChainBytes TargetBytes HeaderBytes)
+unWorkBytes = T3
+    <$> (ChainBytes <$> getBytes 4)
+    <*> (TargetBytes <$> getBytes 32)
+    <*> do
+        l <- fromIntegral <$> remaining
+        HeaderBytes <$> getByteString l
+
+unsafeDecodeWorkHeader :: MonadGet m => m WorkHeader
+unsafeDecodeWorkHeader = WorkHeader
+    <$> decodeChainId
+    <*> decodeHashTarget
+    <*> do
+        l <- fromIntegral <$> remaining
+        BS.toShort <$> getByteString l
 
 chain :: MonadThrow m => MonadIO m => ChainBytes -> m ChainId
 chain (ChainBytes cbs) = runGet decodeChainId cbs

@@ -1,14 +1,19 @@
 packages: .
 
+package aeson
+    flags: +cffi
+
+debug-info: True
+
 source-repository-package
     type: git
     location: https://github.com/kadena-io/chainweb-node.git
-    tag: c9d8c1112ef0093bca04f6124721d8fa41ebf5a9
+    tag: be3d78afb18934e5268d2f95ab9a69226750f0f3
 
 source-repository-package
     type: git
     location: https://github.com/kadena-io/pact.git
-    tag: ace18a2489bf86595af09316bd1c09794c326b77
+    tag: 2ca4cae3eb8a0ef2783aa9457388c31b44a0dfbc
 
 source-repository-package
     type: git
@@ -18,9 +23,12 @@ source-repository-package
 source-repository-package
     type: git
     location: https://github.com/kadena-io/chainweb-storage.git
-    tag: 17a5fb130926582eff081eeb1b94cb6c7097c67a
+    tag: 07e7eb7596c7105aee42dbdb6edd10e3f23c0d7e
 
-constraints:
-      base-unicode-symbols < 0.2.4,
-      megaparsec < 8,
-      neat-interpolation < 0.4
+source-repository-package
+    type: git
+    location: https://github.com/kadena-io/rosetta.git
+    tag: 1ccb68d7aec0414f494fb06f591214e7cf845627
+
+package vault
+    documentation: false
